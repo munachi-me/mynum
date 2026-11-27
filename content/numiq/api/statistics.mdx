@@ -1,0 +1,646 @@
+---
+title: Statistics reference
+description: Descriptions, column statistics, relationships, regression, hypothesis tests, distributions, quality reports, metrics and insights.
+related:
+  - /numiq/docs/api/datasets
+  - /numiq/docs/api/operations
+---
+
+## Describing
+
+### `DatasetDescription`
+
+```ts
+class DatasetDescription<TDataset = unknown> {
+  readonly columns: readonly string[];
+  readonly profiles: readonly ColumnProfile[];
+  readonly rowCount: number;
+  readonly columnCount: number;
+  readonly ddof: number;
+  get(name: string): ColumnProfile;
+  table(options?: TableOptions): string;
+  toDataset(): TDataset;
+  toJSON(): { columns: readonly string[]; profiles: readonly ColumnProfile[]; ddof: number };
+}
+```
+
+Returned by `describe()` with no column argument. `get()` throws `ColumnNotFoundError` for
+an unknown column.
+
+### `ColumnProfile`
+
+```ts
+interface ColumnProfile {
+  readonly name: string;
+  readonly type: DType;
+  readonly kind: ColumnKind;
+  readonly count: number; // present values
+  readonly missing: number;
+  readonly total: number;
+  readonly unique: number;
+  readonly sum: number | null;
+  readonly mean: number | null;
+  readonly median: number | null;
+  readonly mode: unknown;
+  readonly min: unknown;
+  readonly max: unknown;
+  readonly range: number | null;
+  readonly variance: number | null;
+  readonly std: number | null;
+  readonly q1: number | null;
+  readonly q3: number | null;
+  readonly iqr: number | null;
+  readonly ddof: number;
+  readonly percentiles?: Readonly<Record<string, number>>;
+}
+
+type ColumnKind = 'numeric' | 'boolean' | 'temporal' | 'categorical' | 'mixed' | 'empty';
+```
+
+`sum`, `mean`, `median`, `q1`, `q3`, `iqr`, `range`, `variance` and `std` are `null` for any
+non-numeric column — `null`, not `0`.
+
+### `DescribeOptions`
+
+```ts
+interface DescribeOptions {
+  ddof?: number; // default 1
+  percentiles?: readonly number[]; // [0, 100], keys become p<value>
+}
+```
+
+### `profileColumn`
+
+```ts
+function profileColumn(
+  name: string,
+  values: readonly unknown[],
+  total: number,
+  options?: DescribeOptions,
+): ColumnProfile;
+```
+
+Profiles one array of values. `total` is the number of cells considered, so
+`missing = total - count`; pass `values.length` when every cell is present. The dataset
+methods call it per column.
+
+### `columnKind`
+
+```ts
+function columnKind(values: readonly unknown[]): ColumnKind;
+```
+
+Classifies a column as `numeric`, `boolean`, `temporal`, `categorical`, `mixed` or `empty`.
+
+### `validateDescribeOptions`
+
+```ts
+function validateDescribeOptions(options: unknown): DescribeOptions;
+```
+
+Normalizes and validates `describe()` options; throws `ValidationError` for a `ddof`
+outside `[0, n]` or a percentile outside `[0, 100]`.
+
+## Column statistics
+
+```ts
+function quantile(values: readonly unknown[], q: number): number | null;
+function percentile(values: readonly unknown[], p: number): number | null;
+function quartiles(values: readonly unknown[]): { q1: number; q2: number; q3: number } | null;
+function iqr(values: readonly unknown[]): number | null;
+function mode(values: readonly unknown[]): unknown;
+function range(values: readonly unknown[]): number | null;
+function extremes(values: readonly unknown[]): { min: unknown; max: unknown } | null;
+```
+
+| Function     | `null` when                                  |
+| ------------ | -------------------------------------------- |
+| `quantile`   | No present values, or `q` outside `[0, 1]`   |
+| `percentile` | No present values, or `p` outside `[0, 100]` |
+| `quartiles`  | No present values                            |
+| `iqr`        | Fewer than one present value                 |
+| `range`      | No present numeric values                    |
+| `extremes`   | No present values                            |
+
+Quantiles are interpolated with the same method as `numpy.percentile` and R's
+`quantile(type = 7)`.
+
+## Relationships
+
+### `covariance`
+
+```ts
+interface AdvancedOptions {
+  readonly ddof?: number; // default 1
+}
+
+function covariance(
+  left: readonly unknown[],
+  right: readonly unknown[],
+  options?: AdvancedOptions,
+): number | null;
+```
+
+Pairwise-complete covariance, or `null` when fewer than two complete pairs exist.
+
+### `pearsonCorrelation` / `spearmanCorrelation`
+
+```ts
+interface CorrelationResult {
+  readonly r: number | null;
+  readonly n: number;
+  readonly reason: 'insufficient-data' | 'zero-variance' | null;
+}
+
+function pearsonCorrelation(left: readonly unknown[], right: readonly unknown[]): CorrelationResult;
+function spearmanCorrelation(
+  left: readonly unknown[],
+  right: readonly unknown[],
+): CorrelationResult;
+```
+
+### `correlationMatrix`
+
+```ts
+interface CorrelationInput {
+  readonly columns: readonly string[];
+  readonly rows: readonly Readonly<Row>[];
+  readonly method?: 'pearson' | 'spearman';
+}
+
+interface CorrelationMatrix {
+  readonly columns: readonly string[];
+  readonly method: 'pearson' | 'spearman';
+  get(left: string, right: string): { x: string; y: string } & CorrelationResult;
+  toTableData(): TableData;
+  toJSON(): unknown;
+}
+
+function correlationMatrix(input: CorrelationInput): CorrelationMatrix;
+```
+
+`get()` is symmetric: `get("a", "b")` and `get("b", "a")` describe the same pair.
+
+### Position
+
+```ts
+interface ZScoreResult {
+  readonly values: readonly (number | null)[];
+  readonly mean: number;
+  readonly std: number;
+  readonly reason: string | null;
+}
+
+function zScores(values: readonly unknown[], options?: AdvancedOptions): ZScoreResult;
+function standardize(values: readonly unknown[], options?: AdvancedOptions): (number | null)[];
+function percentileRank(values: readonly unknown[], value: number): number | null;
+```
+
+`percentileRank` returns the share of values at or below `value`, as a whole percentage
+(`68`, not `0.68`), or `null` when the column has no present numeric values.
+
+### Shape
+
+```ts
+function skewness(values: readonly unknown[]): number | null;
+function kurtosis(values: readonly unknown[]): number | null;
+
+interface FiveNumberSummary {
+  readonly min: number;
+  readonly q1: number;
+  readonly median: number;
+  readonly q3: number;
+  readonly max: number;
+  readonly mean: number;
+  readonly count: number;
+}
+
+function fiveNumberSummary(values: readonly unknown[]): FiveNumberSummary;
+```
+
+`skewness` is bias-corrected and needs three values; `kurtosis` is bias-corrected **excess**
+kurtosis and needs four. Below those counts the result is `null`.
+
+### Scaling
+
+```ts
+interface NormalizeOptions {
+  readonly method?: 'minmax' | 'maxabs'; // default "minmax"
+  readonly min?: number; // default 0
+  readonly max?: number; // default 1
+}
+
+function normalize(values: readonly unknown[], options?: NormalizeOptions): (number | null)[];
+```
+
+`normalize` maps to `[min, max]` under `minmax`, or divides by the largest absolute value
+under `maxabs`. Every value is `null` when the scale is undefined (empty, constant, or all
+zero under `maxabs`).
+
+### Outliers
+
+```ts
+interface OutlierOptions {
+  readonly method?: 'iqr' | 'zscore' | 'modified-zscore'; // default "iqr"
+  readonly threshold?: number; // default 1.5 for iqr, 3 for zscore, 3.5 for modified-zscore
+}
+
+interface OutlierPoint {
+  readonly index: number;
+  readonly value: number;
+  readonly zScore: number | null;
+  readonly side: 'low' | 'high';
+}
+
+interface OutlierResult {
+  readonly method: 'iqr' | 'zscore' | 'modified-zscore';
+  readonly threshold: number;
+  readonly outliers: readonly OutlierPoint[];
+  readonly fences: { readonly lower: number; readonly upper: number } | null;
+  readonly considered: number;
+}
+
+function detectOutliers(values: readonly unknown[], options?: OutlierOptions): OutlierResult;
+```
+
+`fences` is `null` for the z-score methods, which use a threshold on the score rather than a
+value boundary. `detectOutliers` returns nothing at all for a column with fewer than four
+present numeric values.
+
+## Regression
+
+```ts
+interface RegressionOptions {
+  readonly target: string;
+  readonly features: readonly string[];
+  readonly rows: readonly Readonly<Row>[];
+  readonly columns?: readonly string[];
+}
+
+interface RegressionModel {
+  readonly coefficients: Readonly<Record<string, number>>;
+  readonly intercept: number;
+  readonly rSquared: number;
+  readonly adjustedRSquared: number;
+  readonly rmse: number;
+  readonly n: number;
+  readonly parameters: number;
+  readonly predictions: readonly number[];
+  readonly residuals: readonly number[];
+  readonly featureNames: readonly string[];
+  pValues(): Readonly<Record<string, number>>;
+  predict(rows: readonly Readonly<Row>[]): number[];
+  toJSON(): unknown;
+}
+
+function linearRegression(options: RegressionOptions): RegressionModel;
+```
+
+Throws `ValidationError` for a non-numeric feature, a missing column, or a singular design
+matrix (collinear features). Rows with a missing target or feature are dropped listwise;
+`n` reports how many were used.
+
+## Hypothesis tests
+
+```ts
+interface HypothesisTestResult {
+  readonly test: string;
+  readonly statistic: number;
+  readonly df: number | null;
+  readonly df2: number | null;
+  readonly pValue: number;
+  readonly nullHypothesis: string;
+  readonly alternativeHypothesis: string;
+  readonly significant: boolean;
+  readonly alpha: number;
+  readonly interpretation: string;
+  readonly n: number;
+  readonly details: Readonly<Record<string, unknown>>;
+}
+```
+
+| Function                 | Signature                                                        |
+| ------------------------ | ---------------------------------------------------------------- |
+| `oneSampleTTest`         | `(values, options?: OneSampleTTestOptions)`                      |
+| `twoSampleTTest`         | `(left, right, options?: TwoSampleTTestOptions)`                 |
+| `pairedTTest`            | `(before, after, options?: TestOptions)`                         |
+| `chiSquareTest`          | `(table: readonly (readonly number[])[], options?: TestOptions)` |
+| `oneWayAnova`            | `(groups: readonly AnovaGroup[], options?: TestOptions)`         |
+| `jarqueBeraTest`         | `(values, options?: TestOptions)`                                |
+| `meanConfidenceInterval` | `(values, options?: { confidence?: number })`                    |
+
+```ts
+interface TestOptions {
+  readonly alpha?: number; // default 0.05
+}
+
+interface OneSampleTTestOptions extends TestOptions {
+  readonly mu?: number; // default 0
+}
+
+interface TwoSampleTTestOptions extends TestOptions {
+  readonly pooled?: boolean; // default false (Welch)
+}
+```
+
+`oneSampleTTest` with `mu` is what `Dataset.tTest` calls; `twoSampleTTest` with
+`pooled: false` is what `Dataset.tTestBetween` uses by default.
+
+A test that cannot be computed returns `pValue: NaN` and `significant: false`, with an
+`interpretation` explaining why.
+
+## Distributions
+
+```ts
+interface Distribution {
+  readonly mean: number;
+  readonly variance: number;
+  readonly sd: number;
+}
+
+interface ContinuousDistribution extends Distribution {
+  pdf(x: number): number;
+  cdf(x: number): number;
+  quantile(p: number): number;
+  sample(random?: () => number): number;
+}
+
+interface DiscreteDistribution extends Distribution {
+  pmf(k: number): number;
+  cdf(k: number): number;
+  quantile(p: number): number;
+  sample(random?: () => number): number;
+}
+
+function normalDistribution(mean?: number, sd?: number): ContinuousDistribution;
+function uniformDistribution(min?: number, max?: number): ContinuousDistribution;
+function binomialDistribution(trials: number, probability: number): DiscreteDistribution;
+function poissonDistribution(rate: number): DiscreteDistribution;
+
+function drawSamples(
+  distribution: ContinuousDistribution | DiscreteDistribution,
+  count: number,
+  options?: { random?: () => number },
+): number[];
+```
+
+Special functions:
+
+```ts
+function normalCdf(z: number): number;
+function normalQuantile(p: number): number;
+function tCdf(t: number, df: number): number;
+function tQuantile(p: number, df: number): number;
+function chiSquareCdf(x: number, df: number): number;
+function chiSquareQuantile(p: number, df: number): number;
+function fCdf(x: number, df1: number, df2: number): number;
+function fQuantile(p: number, df1: number, df2: number): number;
+function incompleteGamma(a: number, x: number): number;
+function incompleteBeta(a: number, b: number, x: number): number;
+```
+
+## Quality
+
+### `DatasetProfile`
+
+```ts
+class DatasetProfile<TDataset = unknown> {
+  readonly rowCount: number;
+  readonly columnCount: number;
+  readonly summary: DatasetProfileSummary;
+  readonly profiles: readonly ColumnProfile[];
+  readonly findings: readonly QualityFinding[];
+  readonly findingCount: number;
+  readonly truncated: boolean;
+  readonly bySeverity: Readonly<Record<QualitySeverity, number>>;
+  readonly ddof: number;
+  get columns(): readonly string[];
+  get healthy(): boolean;
+  get(column: string): ColumnProfile;
+  describe(): DatasetDescription<TDataset>;
+  findingsFor(column: string | null): readonly QualityFinding[];
+  table(options?: TableOptions): string;
+  findingsTable(): string;
+  toJSON(): unknown;
+}
+
+type QualitySeverity = 'error' | 'warning' | 'info';
+```
+
+`healthy` is `true` when no finding has `error` severity. Findings are capped by
+`maxFindings` (default 100) after sorting worst first; `findingCount` keeps the true total.
+
+### `QualityReport`
+
+```ts
+class QualityReport {
+  readonly findings: readonly QualityFinding[];
+  readonly columns: readonly string[];
+  readonly rowCount: number;
+  readonly bySeverity: Readonly<Record<QualitySeverity, number>>;
+  get healthy(): boolean;
+  forColumn(column: string | null): readonly QualityFinding[];
+  forCode(code: string): readonly QualityFinding[];
+  table(): string;
+  toJSON(): unknown;
+}
+```
+
+`forColumn(null)` returns dataset-level findings. Codes are stable strings such as
+`"MISSING_VALUES"`, `"DUPLICATE_ROWS"`, `"OUTLIERS"`, `"CONSTANT_COLUMN"`,
+`"EMPTY_COLUMN"` and `"MIXED_TYPES"`.
+
+### Reports
+
+```ts
+interface MissingValuesReport {
+  readonly columns: readonly ColumnMissingSummary[];
+  readonly totalMissing: number;
+  readonly totalCells: number;
+  readonly percent: number;
+  readonly affected: readonly string[];
+}
+
+interface DuplicateReport {
+  readonly columns: readonly string[];
+  readonly groups: readonly DuplicateGroup[];
+  readonly duplicateRows: number;
+  readonly removable: number;
+  readonly truncated: boolean;
+}
+
+interface OutliersReport {
+  readonly columns: readonly ColumnOutliers[];
+  readonly totalOutliers: number;
+}
+```
+
+`missingValues({ columns, maxRows })` records up to `maxRows` row indices per column (default 10) and sets `truncated` when it stops. `findDuplicates({ columns, maxGroups })` groups rows
+by key and records `duplicateRows` and `removable`, which are equal by construction.
+
+## Metrics
+
+```ts
+class Metric {
+  readonly name: string;
+  readonly value: unknown;
+  readonly metric: MetricResult;
+  readonly aggregation: AggregationOp | null;
+  readonly column: string | null;
+  readonly format: MetricFormat;
+  readonly metadata: MetricMetadata;
+  readonly groupBy: readonly string[];
+  readonly definition: string;
+  readonly rowCount: number;
+  readonly rows: readonly Readonly<Row>[];
+  readonly columns: readonly string[];
+  byGroup(): GroupedMetricResult;
+  compare(options: MetricCompareOptions): MetricComparison;
+  recalculate(rows: readonly Row[], columns?: readonly string[]): Metric;
+  toJSON(): unknown;
+}
+
+interface MetricResult {
+  readonly value: unknown;
+  readonly rows: number;
+  readonly values: number | null;
+  readonly reason: 'empty' | 'no-values' | 'not-numeric' | null;
+}
+
+interface GroupedMetricResult {
+  readonly groups: readonly MetricGroupValue[];
+  readonly groupCount: number;
+  readonly totalRows: number;
+}
+
+function createMetric(spec: MetricSpec, rows: readonly Row[], columns?: readonly string[]): Metric;
+
+function isAggregationOp(value: unknown): value is AggregationOp;
+```
+
+`MetricSpec` has three shapes: an aggregation (`{ name, column?, aggregation, ddof? }`), a
+column callback (`{ name, column, fn }`) and a row-set callback (`{ name, fn }`). All accept
+`format`, `metadata` and `groupBy`.
+
+```ts
+interface MetricFormat {
+  readonly prefix?: string;
+  readonly suffix?: string;
+  readonly decimals?: number;
+  readonly scale?: number;
+  readonly unit?: string;
+}
+
+interface MetricCompareOptions {
+  readonly to: MetricResult | number | null;
+  readonly label?: string;
+}
+
+interface MetricComparison {
+  readonly other: string;
+  readonly value: unknown;
+  readonly otherValue: unknown;
+  readonly difference: number | null;
+  readonly ratio: number | null;
+  readonly percentChange: number | null;
+  readonly percentDifference: number | null;
+  readonly reason: 'not-numeric' | 'zero-baseline' | null;
+}
+```
+
+`percentChange` is `value / otherValue * 100`; `percentDifference` is
+`(value - otherValue) / otherValue * 100`.
+
+## Insights
+
+```ts
+interface Insight {
+  readonly kind:
+    | 'missing-data'
+    | 'outliers'
+    | 'correlation'
+    | 'category-extreme'
+    | 'group-change'
+    | 'dominance'
+    | 'trend';
+  readonly severity: 'info' | 'notice' | 'warning';
+  readonly title: string;
+  readonly detail: string;
+  readonly evidence: Readonly<Record<string, unknown>>;
+  readonly columns: readonly string[];
+}
+
+interface InsightReport {
+  readonly insights: readonly Insight[];
+  readonly skipped: readonly { readonly kind: string; readonly reason: string }[];
+  readonly truncated: number;
+  readonly thresholds: ResolvedInsightOptions;
+}
+
+function analyze(
+  input: {
+    rows: readonly Row[];
+    columns: readonly string[];
+    schema?: Readonly<Record<string, ColumnSchema>>;
+  },
+  options?: InsightOptions,
+): InsightReport;
+
+function resolveInsightOptions(options?: InsightOptions): ResolvedInsightOptions;
+```
+
+`ResolvedInsightOptions` fills every threshold with its documented default:
+`strongCorrelation` 0.7, `dominanceShare` 0.5, `outlierThreshold` 1.5, `trendStrength` 0.7,
+`minGroupSize` 3, `maxCategoryRatio` 0.5, `minRelativeGap` 0.25, `maxInsights` 50 and
+`minTrendPoints` 4.
+
+## Sampling and cohorts
+
+```ts
+function stratifiedSample(
+  rows: readonly Row[],
+  columns: readonly string[],
+  size: number,
+  strata: readonly string[],
+  options?: SampleOptions,
+): PreparedTable;
+
+function systematicSample(
+  rows: readonly Row[],
+  columns: readonly string[],
+  interval: number,
+  options?: SampleOptions,
+): PreparedTable;
+
+function percentChange(values: readonly unknown[]): (number | null)[];
+
+function cohortAnalysis(rows: readonly Row[], options: CohortOptions): PreparedTable;
+```
+
+`PreparedTable` is `{ rows, columns }` — the internal table shape that the `Dataset` methods
+wrap. `percentChange` works on one column's values; `Dataset.percentChange(column, name?)`
+combines it with the row data. `cohortAnalysis` buckets by cohort and period and returns one
+row per cohort × period cell.
+
+```ts
+interface SampleOptions {
+  readonly seed?: number;
+  readonly replace?: boolean;
+}
+
+interface CohortOptions {
+  readonly cohort: string;
+  readonly time: string;
+  readonly interval: TimeInterval;
+  readonly metrics: readonly {
+    readonly column: string;
+    readonly operation: AggregationOp;
+    readonly name?: string;
+  }[];
+}
+```
+
+## Next
+
+- [Operations](/numiq/docs/api/operations)
+- [Compatibility](/numiq/docs/compatibility)

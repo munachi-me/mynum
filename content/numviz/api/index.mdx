@@ -1,0 +1,965 @@
+---
+title: API reference
+description: Every public export, configuration type, method and lifecycle hook in @munachi-me/numviz 1.0.2.
+related:
+  - /numviz/docs/charts
+  - /numviz/docs/tables
+  - /numviz/docs/dashboards
+---
+
+Everything on this page is exported from `@munachi-me/numviz` 1.0.2. The optional React
+components come from `@munachi-me/numviz/react`.
+
+## Exports
+
+| Export                    | Kind           | Description                                                    |
+| ------------------------- | -------------- | -------------------------------------------------------------- |
+| `createChart(config)`     | function       | Create a chart instance                                        |
+| `createTable(config)`     | function       | Create a table instance                                        |
+| `createMetric(config)`    | function       | Create a metric and compute its value                          |
+| `createDashboard(config)` | function       | Create a dashboard                                             |
+| `createReport(config)`    | function       | Create a report (a dashboard with presets)                     |
+| `REPORT_PRESETS`          | object         | Built-in report layouts                                        |
+| `version`                 | string         | Package version, `"1.0.2"`                                     |
+| `NumvizError`             | class          | Error type with a stable `code`                                |
+| `isNumvizError(value)`    | function       | Type guard                                                     |
+| `Numviz`                  | default export | Namespace with the five factories, `version` and `NumvizError` |
+
+## Data input
+
+```ts
+type DataRecord = Record<string, unknown>;
+type DataMatrixRow = readonly unknown[];
+type ColumnType = 'number' | 'date' | 'string' | 'boolean';
+
+interface ColumnDefinition {
+  readonly key: string;
+  readonly label?: string;
+  readonly type?: ColumnType;
+}
+
+type ColumnInput = string | ColumnDefinition;
+
+interface DatasetLike {
+  readonly columns?: readonly ColumnInput[];
+  readonly rows?: readonly (DataRecord | DataMatrixRow)[];
+  readonly data?: readonly DataRecord[];
+}
+
+type DataInput = readonly DataRecord[] | readonly DataMatrixRow[] | DatasetLike;
+type NormalizedValue = number | string | boolean | Date | null;
+
+interface NormalizedRow {
+  readonly index: number;
+  readonly values: Readonly<Record<string, NormalizedValue>>;
+  readonly source: DataRecord | DataMatrixRow;
+}
+
+interface NormalizedColumn {
+  readonly key: string;
+  readonly label: string;
+  readonly type: ColumnType;
+}
+
+interface NormalizedDataset {
+  readonly columns: readonly NormalizedColumn[];
+  readonly rows: readonly NormalizedRow[];
+  readonly rowCount: number;
+}
+```
+
+Input is never mutated. Numeric strings are normalized to numbers; unparseable values stay as
+strings and are treated as missing by numeric aggregations.
+
+## Theme
+
+```ts
+type ThemeMode = 'light' | 'dark' | 'system';
+
+interface ThemeColors {
+  primary?: string;
+  background?: string;
+  surface?: string;
+  surfaceElevated?: string;
+  text?: string;
+  mutedText?: string;
+  border?: string;
+  grid?: string;
+  positive?: string;
+  warning?: string;
+  danger?: string;
+  info?: string;
+}
+
+interface ThemeConfig {
+  mode?: ThemeMode;
+  colors?: ThemeColors;
+  accent?: string;
+  fontFamily?: string;
+  borderRadius?: number;
+  chartPalette?: readonly string[];
+  background?: string;
+  surface?: string;
+  surfaceElevated?: string;
+  text?: string;
+  mutedText?: string;
+  border?: string;
+  grid?: string;
+  positive?: string;
+  warning?: string;
+  danger?: string;
+  info?: string;
+}
+
+interface ThemeTokens {
+  readonly mode: 'light' | 'dark';
+  readonly background: string;
+  readonly surface: string;
+  readonly surfaceElevated: string;
+  readonly text: string;
+  readonly mutedText: string;
+  readonly border: string;
+  readonly grid: string;
+  readonly accent: string;
+  readonly positive: string;
+  readonly warning: string;
+  readonly danger: string;
+  readonly info: string;
+  readonly fontFamily: string;
+  readonly borderRadius: number;
+  readonly chartPalette: readonly string[];
+}
+```
+
+Resolved tokens are applied to each component root as `--nv-*` custom properties.
+
+## Charts
+
+```ts
+type ChartType =
+  | 'bar'
+  | 'line'
+  | 'pie'
+  | 'doughnut'
+  | 'area'
+  | 'stacked-bar'
+  | 'grouped-bar'
+  | 'horizontal-bar'
+  | 'scatter'
+  | 'histogram'
+  | 'radar';
+
+interface SeriesConfig {
+  field: string;
+  label?: string;
+  color?: string;
+}
+
+interface AxisConfig {
+  title?: string;
+  show?: boolean;
+  grid?: boolean;
+  rotate?: number;
+  tickFormat?: (value: number | string | Date) => string;
+  min?: number;
+  max?: number;
+}
+
+interface LegendConfig {
+  show?: boolean;
+  position?: 'top' | 'bottom' | 'left' | 'right';
+  interactive?: boolean;
+}
+
+interface LabelConfig {
+  show?: boolean;
+  position?: 'auto' | 'inside' | 'outside';
+  formatter?: (value: number, label: string) => string;
+}
+
+interface TooltipConfig {
+  show?: boolean;
+  formatter?: (value: number, context: TooltipContext) => string;
+}
+
+interface TooltipContext {
+  readonly label: string;
+  readonly field: string;
+  readonly index: number;
+  readonly series?: string;
+}
+
+interface AnimationConfig {
+  enabled?: boolean;
+  duration?: number;
+}
+
+interface ChartConfig {
+  type: ChartType;
+  data: DataInput;
+  x?: string;
+  y?: string;
+  category?: string;
+  value?: string;
+  series?: readonly SeriesConfig[];
+  columns?: readonly ColumnInput[];
+  title?: string;
+  subtitle?: string;
+  width?: number;
+  height?: number;
+  palette?: readonly string[];
+  background?: string;
+  className?: string;
+  legend?: boolean | LegendConfig;
+  labels?: boolean | LabelConfig;
+  tooltip?: boolean | TooltipConfig;
+  margin?: number | Partial<MarginConfig>;
+  theme?: ThemeConfig;
+  ariaLabel?: string;
+  xAxis?: AxisConfig;
+  yAxis?: AxisConfig;
+  bins?: number;
+  responsive?: boolean;
+  animation?: boolean | AnimationConfig;
+  selectedIndex?: number | null;
+  onClick?: (event: ChartClickEvent) => void;
+}
+
+interface ChartClickEvent {
+  readonly type: ChartType;
+  readonly label: string;
+  readonly field: string;
+  readonly series?: string;
+  readonly value: number | null;
+  readonly index: number;
+  readonly originalEvent: Event;
+}
+
+interface Chart {
+  readonly config: ResolvedChartConfig;
+  readonly data: NormalizedDataset;
+  readonly element: HTMLElement | null;
+  readonly isDestroyed: boolean;
+  setSeriesVisible(index: number, visible: boolean): Chart;
+  setSelectedIndex(index: number | null): Chart;
+  getSelectedIndex(): number | null;
+  getSummary(): string;
+  toSVG(options?: ChartExportOptions): string;
+  toPNG(options?: ChartPNGExportOptions): Promise<Blob>;
+  update(config: ChartConfig): Chart;
+  render(target: string | Element): Chart;
+  destroy(): void;
+}
+
+function createChart(config: ChartConfig): Chart;
+```
+
+Defaults: `width` 720, `height` 380, `responsive` true when `width` is omitted, `legend`
+hidden (shown for pie and doughnut), `labels` hidden, tooltips shown, animation enabled,
+margin `{ top: 16, right: 20, bottom: 44, left: 56 }`.
+
+## Tables
+
+```ts
+type TableVariant = 'minimal' | 'striped' | 'bordered' | 'compact' | 'dashboard';
+type TableAlign = 'left' | 'center' | 'right';
+type TableSortDirection = 'asc' | 'desc';
+type TableFormatPreset = 'text' | 'number' | 'currency' | 'percent' | 'date';
+type TableRow = Readonly<Record<string, unknown>>;
+
+interface TableSortState {
+  readonly field: string;
+  readonly direction: TableSortDirection;
+}
+
+interface TableCellContext {
+  readonly rowIndex: number;
+  readonly row: TableRow;
+  readonly column: ResolvedTableColumn;
+}
+
+type TableFormatter = (value: unknown, row: TableRow, column: ResolvedTableColumn) => string;
+type TableCellRenderer = (
+  row: TableRow,
+  context: TableCellContext,
+) => Node | string | number | bigint | null | undefined;
+
+interface TableColumnConfig {
+  field?: string;
+  key?: string;
+  label?: string;
+  type?: ColumnType;
+  visible?: boolean;
+  width?: number | string;
+  align?: TableAlign;
+  format?: TableFormatPreset | TableFormatter;
+  formatOptions?: Intl.NumberFormatOptions | Intl.DateTimeFormatOptions;
+  currency?: string;
+  render?: TableCellRenderer;
+  value?: (row: TableRow) => unknown;
+  sortable?: boolean;
+  searchable?: boolean;
+  className?: string;
+  headerClassName?: string;
+}
+
+interface TableConfig {
+  data: DataInput;
+  columns?: readonly (string | TableColumnConfig)[];
+  sortable?: boolean;
+  defaultSort?: TableSortState | { field: string; direction?: TableSortDirection } | null;
+  onSortChange?: (sort: TableSortState | null) => void;
+  searchable?: boolean;
+  searchPlaceholder?: string;
+  onSearchChange?: (query: string) => void;
+  pagination?: boolean;
+  pageSize?: number;
+  pageSizeOptions?: readonly number[];
+  onPageChange?: (page: number) => void;
+  rowNumbers?: boolean;
+  selectable?: boolean;
+  selectedRows?: readonly number[];
+  onSelectionChange?: (indices: readonly number[], rows: readonly TableRow[]) => void;
+  loading?: boolean;
+  loadingMessage?: string;
+  error?: string | null;
+  emptyMessage?: string;
+  noResultsMessage?: string;
+  striped?: boolean;
+  stickyHeader?: boolean;
+  maxHeight?: number | string;
+  variant?: TableVariant;
+  locale?: string;
+  theme?: ThemeConfig;
+  className?: string;
+  title?: string;
+  caption?: string;
+  ariaLabel?: string;
+  responsive?: boolean;
+}
+
+interface TableState {
+  readonly sort: TableSortState | null;
+  readonly page: number;
+  readonly pageCount: number;
+  readonly search: string;
+  readonly selectedRows: readonly number[];
+  readonly filteredRowCount: number;
+  readonly totalRowCount: number;
+}
+
+interface Table {
+  readonly config: ResolvedTableConfig;
+  readonly data: TableData;
+  readonly element: HTMLElement | null;
+  readonly isDestroyed: boolean;
+  render(target: string | Element): Table;
+  update(config: TableConfig): Table;
+  setData(data: DataInput, columns?: readonly (string | TableColumnConfig)[]): Table;
+  setLoading(loading: boolean): Table;
+  setError(message: string | null): Table;
+  setSort(field: string | null, direction?: TableSortDirection, emit?: boolean): Table;
+  setPage(page: number, emit?: boolean): Table;
+  setSearch(query: string, emit?: boolean): Table;
+  setSelection(indices: readonly number[], emit?: boolean): Table;
+  getSelectedRows(): TableRow[];
+  toCSV(options?: TableCSVExportOptions): string;
+  toJSON(options?: TableJSONExportOptions): string;
+  toHTML(options?: TableHTMLExportOptions): string;
+  getState(): TableState;
+  destroy(): void;
+}
+
+function createTable(config: TableConfig): Table;
+```
+
+## Metrics
+
+```ts
+type MetricAggregationName =
+  | 'sum'
+  | 'average'
+  | 'count'
+  | 'distinct-count'
+  | 'minimum'
+  | 'maximum'
+  | 'median'
+  | 'percentage'
+  | 'custom';
+
+type MetricAggregationAlias =
+  'avg' | 'mean' | 'min' | 'max' | 'distinct' | 'distinctCount' | 'percent';
+
+type MetricAggregation =
+  MetricAggregationName | MetricAggregationAlias | ((context: MetricContext) => number | null);
+
+interface MetricContext {
+  readonly rows: readonly NormalizedRow[];
+  readonly values: readonly number[];
+  readonly column?: string;
+  readonly totalRowCount: number;
+  readonly matchedRowCount: number;
+  readonly dataset: NormalizedDataset;
+}
+
+interface MetricRowContext {
+  readonly index: number;
+  readonly values: Readonly<Record<string, NormalizedValue>>;
+  readonly row: DataRecord | DataMatrixRow;
+}
+
+type MetricRowFilter = (row: MetricRowContext) => boolean;
+type MetricFilter = MetricRowFilter | Readonly<Record<string, unknown>>;
+
+type MetricFormatPreset = 'number' | 'currency' | 'percent' | 'compact';
+type MetricFormat = MetricFormatPreset | MetricFormatter;
+type MetricFormatter = (value: number | null, context: MetricFormatContext) => string;
+
+interface MetricFormatContext {
+  readonly name: string;
+  readonly aggregation: MetricAggregationName;
+  readonly column?: string;
+  readonly locale: string;
+  readonly currency: string;
+}
+
+type MetricTrend = 'auto' | 'up' | 'down' | 'flat' | false;
+type MetricDirection = 'up' | 'down' | 'flat';
+type MetricState = 'positive' | 'negative' | 'neutral';
+type MetricVariant = 'default' | 'compact' | 'bordered' | 'highlight';
+type MetricIcon = string | Node;
+
+interface MetricComparisonConfig {
+  readonly data?: DataInput;
+  readonly value?: number | null;
+  readonly column?: string;
+  readonly columns?: readonly ColumnInput[];
+  readonly aggregation?: MetricAggregation;
+  readonly filter?: MetricFilter;
+  readonly label?: string;
+  readonly format?: MetricFormat;
+  readonly formatOptions?: Intl.NumberFormatOptions;
+  readonly currency?: string;
+}
+
+interface MetricComparisonResult {
+  readonly source: 'data' | 'value';
+  readonly value: number | null;
+  readonly formattedValue: string;
+  readonly difference: number | null;
+  readonly formattedDifference: string;
+  readonly percentageChange: number | null;
+  readonly growth: number | null;
+  readonly direction: MetricDirection | null;
+  readonly label: string;
+  readonly rowCount: number;
+  readonly matchedRowCount: number;
+  readonly validCount: number;
+}
+
+interface MetricResult {
+  readonly name: string;
+  readonly title: string;
+  readonly value: number | null;
+  readonly formattedValue: string;
+  readonly description?: string;
+  readonly prefix?: string;
+  readonly suffix?: string;
+  readonly aggregation: MetricAggregationName;
+  readonly column?: string;
+  readonly locale: string;
+  readonly currency: string;
+  readonly rowCount: number;
+  readonly matchedRowCount: number;
+  readonly validCount: number;
+  readonly missingCount: number;
+  readonly comparison: MetricComparisonResult | null;
+  readonly direction: MetricDirection | null;
+  readonly trend: MetricDirection | null;
+  readonly state: MetricState;
+  readonly metadata: Readonly<Record<string, unknown>>;
+}
+
+interface MetricConfig {
+  readonly name: string;
+  readonly title?: string;
+  readonly data: DataInput;
+  readonly columns?: readonly ColumnInput[];
+  readonly column?: string;
+  readonly aggregation?: MetricAggregation;
+  readonly filter?: MetricFilter;
+  readonly description?: string;
+  readonly format?: MetricFormat;
+  readonly formatOptions?: Intl.NumberFormatOptions;
+  readonly locale?: string;
+  readonly currency?: string;
+  readonly prefix?: string;
+  readonly suffix?: string;
+  readonly comparison?: MetricComparisonConfig;
+  readonly trend?: MetricTrend;
+  readonly positiveDirection?: 'up' | 'down';
+  readonly icon?: MetricIcon;
+  readonly color?: string;
+  readonly variant?: MetricVariant;
+  readonly theme?: ThemeConfig;
+  readonly className?: string;
+  readonly loading?: boolean;
+  readonly error?: string | null;
+  readonly emptyMessage?: string;
+  readonly ariaLabel?: string;
+}
+
+interface Metric {
+  readonly config: MetricConfig;
+  readonly result: MetricResult;
+  readonly element: HTMLElement | null;
+  readonly isDestroyed: boolean;
+  render(target: string | Element): Metric;
+  update(config: MetricConfig): Metric;
+  setData(data: DataInput): Metric;
+  setLoading(loading: boolean): Metric;
+  setError(message: string | null): Metric;
+  refresh(): Metric;
+  destroy(): void;
+}
+
+function createMetric(config: MetricConfig): Metric;
+```
+
+## Dashboards
+
+```ts
+type DashboardBreakpoint = 'sm' | 'md' | 'lg' | 'xl';
+type DashboardAlignment = 'start' | 'center' | 'end' | 'stretch';
+type DashboardVariant = 'default' | 'compact' | 'flush';
+type DashboardWidgetShadow = 'none' | 'sm' | 'md' | 'lg';
+type DashboardHeadingLevel = 1 | 2 | 3 | 4 | 5 | 6;
+type DashboardImageFit = 'cover' | 'contain';
+type DashboardFilterType =
+  'select' | 'multi-select' | 'search' | 'date-range' | 'number-range' | 'custom';
+type DashboardFilterValue =
+  string | number | boolean | null | DashboardFilterRange | readonly (string | number | boolean)[];
+
+interface DashboardFilterRange {
+  readonly from?: string | number | null;
+  readonly to?: string | number | null;
+}
+
+interface DashboardLayout {
+  readonly columns?: { base?: number; sm?: number; md?: number; lg?: number; xl?: number };
+  readonly breakpoints?: { sm?: number; md?: number; lg?: number; xl?: number };
+  readonly rows?: string;
+  readonly autoRows?: string;
+  readonly gap?: string;
+  readonly rowGap?: string;
+  readonly padding?: string;
+  readonly align?: DashboardAlignment;
+  readonly variant?: DashboardVariant;
+}
+
+interface DashboardComponentLayout {
+  readonly column?: number;
+  readonly row?: number;
+  readonly columnSpan?: number;
+  readonly rowSpan?: number;
+  readonly order?: number;
+  readonly width?: number | string;
+  readonly height?: number | string;
+  readonly minWidth?: number | string;
+  readonly minHeight?: number | string;
+  readonly align?: DashboardAlignment;
+}
+
+interface DashboardWidgetStyle {
+  readonly background?: string;
+  readonly border?: string;
+  readonly borderRadius?: number | string;
+  readonly padding?: number | string;
+  readonly boxShadow?: DashboardWidgetShadow;
+  readonly className?: string;
+}
+
+interface DashboardWidgetBase {
+  readonly id: string;
+  readonly title?: string;
+  readonly ariaLabel?: string;
+  readonly layout?: DashboardComponentLayout;
+  readonly style?: DashboardWidgetStyle;
+  readonly visible?: boolean;
+  readonly crossFilter?: DashboardCrossFilterConfig;
+}
+
+type DashboardComponent =
+  | (DashboardWidgetBase & Omit<ChartConfig, 'type'> & { type: 'chart'; chartType: ChartType })
+  | (DashboardWidgetBase & TableConfig & { type: 'table' })
+  | (DashboardWidgetBase & Omit<MetricConfig, 'name'> & { type: 'metric'; name?: string })
+  | (DashboardWidgetBase & { type: 'heading'; text: string; level?: DashboardHeadingLevel })
+  | (DashboardWidgetBase & { type: 'text'; text: string })
+  | (DashboardWidgetBase & { type: 'description'; text: string })
+  | (DashboardWidgetBase & { type: 'divider' })
+  | (DashboardWidgetBase & {
+      type: 'image';
+      src: string;
+      alt: string;
+      width?: number | string;
+      height?: number | string;
+      fit?: DashboardImageFit;
+      caption?: string;
+    })
+  | (DashboardWidgetBase & {
+      type: 'custom';
+      render: (context: DashboardCustomRenderContext) => Node | string | null;
+      destroy?: () => void;
+    });
+```
+
+### Filters
+
+```ts
+interface DashboardFilterBase {
+  readonly id: string;
+  readonly field?: string;
+  readonly label?: string;
+  readonly placeholder?: string;
+  readonly targets?: readonly string[];
+  readonly defaultValue?: DashboardFilterValue;
+  readonly className?: string;
+}
+
+interface DashboardSelectFilter extends DashboardFilterBase {
+  readonly type: 'select' | 'multi-select';
+  readonly options?: readonly (DashboardFilterOption | string | number | boolean)[];
+  readonly multi?: boolean;
+}
+
+interface DashboardSearchFilter extends DashboardFilterBase {
+  readonly type: 'search';
+}
+
+interface DashboardDateRangeFilter extends DashboardFilterBase {
+  readonly type: 'date-range';
+  readonly min?: string;
+  readonly max?: string;
+}
+
+interface DashboardNumberRangeFilter extends DashboardFilterBase {
+  readonly type: 'number-range';
+  readonly min?: number;
+  readonly max?: number;
+  readonly step?: number;
+}
+
+interface DashboardCustomFilter extends DashboardFilterBase {
+  readonly type: 'custom';
+  readonly render: (context: DashboardFilterRenderContext) => Node | string | null;
+  readonly matches?: (row: DashboardFilterRowContext, value: DashboardFilterValue) => boolean;
+}
+
+type DashboardFilter =
+  | DashboardSelectFilter
+  | DashboardSearchFilter
+  | DashboardDateRangeFilter
+  | DashboardNumberRangeFilter
+  | DashboardCustomFilter;
+```
+
+### Configuration
+
+```ts
+interface DashboardHeaderConfig {
+  readonly title?: string;
+  readonly description?: string;
+  readonly text?: string;
+  readonly logo?: string;
+  readonly className?: string;
+}
+
+interface DashboardFooterConfig {
+  readonly text?: string;
+  readonly className?: string;
+}
+
+interface DashboardFormatConfig {
+  readonly locale?: string;
+  readonly currency?: string;
+}
+
+interface DashboardPrintOptions {
+  readonly hideFilters?: boolean; // default true
+  readonly hideHeader?: boolean;
+  readonly hideFooter?: boolean;
+  readonly pageBreak?: 'auto' | 'avoid'; // default "avoid"
+}
+
+interface DashboardConfig {
+  readonly title?: string;
+  readonly description?: string;
+  readonly components: readonly DashboardComponent[];
+  readonly theme?: ThemeConfig;
+  readonly background?: string;
+  readonly layout?: DashboardLayout;
+  readonly header?: DashboardHeaderConfig | string | false;
+  readonly footer?: DashboardFooterConfig | string | false;
+  readonly format?: DashboardFormatConfig;
+  readonly widgetStyle?: DashboardWidgetStyle;
+  readonly filters?: readonly DashboardFilter[];
+  readonly print?: boolean | DashboardPrintOptions;
+  readonly className?: string;
+}
+```
+
+### State and events
+
+```ts
+interface DashboardState {
+  readonly filters: Readonly<Record<string, DashboardFilterValue>>;
+  readonly selections: Readonly<Record<string, readonly number[]>>;
+  readonly visibleComponents: Readonly<Record<string, boolean>>;
+  readonly crossFilters?: Readonly<Record<string, DashboardCrossFilterState>>;
+}
+
+type DashboardStateUpdate = Partial<DashboardState>;
+type DashboardEventType = 'filterchange' | 'selectionchange' | 'widgetclick' | 'statechange';
+
+interface DashboardFilterChangeEvent {
+  readonly type: 'filterchange';
+  readonly id: string;
+  readonly value: DashboardFilterValue;
+  readonly filters: Readonly<Record<string, DashboardFilterValue>>;
+  readonly source?: string;
+}
+
+interface DashboardSelectionChangeEvent {
+  readonly type: 'selectionchange';
+  readonly id: string;
+  readonly indices: readonly number[];
+  readonly source?: string;
+}
+
+interface DashboardWidgetClickEvent {
+  readonly type: 'widgetclick';
+  readonly id: string;
+  readonly event: ChartClickEvent;
+}
+
+interface DashboardStateChangeEvent {
+  readonly type: 'statechange';
+  readonly state: DashboardState;
+}
+```
+
+### Instance
+
+```ts
+interface DashboardWidget {
+  readonly id: string;
+  readonly type: DashboardComponent['type'];
+  readonly component: DashboardComponent;
+  readonly instance: Chart | Table | Metric | null;
+  readonly element: HTMLElement | null;
+}
+
+interface Dashboard {
+  readonly config: ResolvedDashboardConfig;
+  readonly widgets: readonly DashboardWidget[];
+  readonly element: HTMLElement | null;
+  readonly isDestroyed: boolean;
+  render(target: string | Element): Dashboard;
+  update(config: DashboardConfig): Dashboard;
+  refresh(): Dashboard;
+  getWidget(id: string): DashboardWidget | null;
+  getFilter(id: string): DashboardFilterValue;
+  setFilter(id: string, value: DashboardFilterValue): Dashboard;
+  clearFilter(id: string): Dashboard;
+  clearFilters(): Dashboard;
+  getSelection(id: string): readonly number[];
+  setSelection(id: string, indices: readonly number[], emit?: boolean): Dashboard;
+  setComponentVisible(id: string, visible: boolean): Dashboard;
+  getState(): DashboardState;
+  setState(state: DashboardStateUpdate): Dashboard;
+  setWidgetData(id: string, data: DataInput, columns?: readonly ColumnInput[]): Dashboard;
+  updateWidget(id: string, patch: Partial<DashboardComponent>): Dashboard;
+  on<K extends DashboardEventType>(
+    type: K,
+    listener: (event: DashboardEventMap[K]) => void,
+  ): () => void;
+  off<K extends DashboardEventType>(type: K, listener: (event: DashboardEventMap[K]) => void): void;
+  print(options?: DashboardPrintOptions): Dashboard;
+  export(options: DashboardExportOptions): Promise<DashboardExportResult>;
+  destroy(): void;
+}
+
+function createDashboard(config: DashboardConfig): Dashboard;
+```
+
+## Reports
+
+```ts
+type ReportType = 'executive' | 'analytical' | 'kpi' | 'table' | 'charts' | 'dashboard';
+
+interface ReportMetadata {
+  readonly title?: string;
+  readonly author?: string;
+  readonly subject?: string;
+  readonly description?: string;
+  readonly createdAt?: string;
+}
+
+interface ReportConfig extends DashboardConfig {
+  readonly type?: ReportType; // default "dashboard"
+  readonly metadata?: ReportMetadata;
+}
+
+interface ReportPreset {
+  readonly layout?: DashboardConfig['layout'];
+  readonly print?: boolean | DashboardPrintOptions;
+  readonly widgetStyle?: DashboardConfig['widgetStyle'];
+}
+
+interface Report extends Dashboard {
+  readonly reportType: ReportType;
+  readonly metadata?: ReportMetadata;
+  print(options?: DashboardPrintOptions): Report;
+}
+
+function createReport(config: ReportConfig): Report;
+```
+
+## Export
+
+```ts
+interface ChartExportOptions {
+  readonly width?: number;
+  readonly height?: number;
+  readonly scale?: number;
+  readonly background?: string;
+}
+
+interface ChartPNGExportOptions extends ChartExportOptions {
+  readonly quality?: number;
+}
+
+type TableExportScope = 'all' | 'page';
+
+interface TableExportOptions {
+  readonly scope?: TableExportScope;
+  readonly includeHidden?: boolean;
+}
+
+interface TableCSVExportOptions extends TableExportOptions {
+  readonly delimiter?: string;
+  readonly includeHeaders?: boolean;
+  readonly bom?: boolean;
+  readonly lineEnding?: string;
+  readonly formulaProtection?: boolean;
+}
+
+interface TableJSONExportOptions extends TableExportOptions {
+  readonly format?: 'objects' | 'matrix';
+  readonly useLabels?: boolean;
+  readonly raw?: boolean;
+  readonly includeHeaders?: boolean;
+  readonly pretty?: boolean;
+}
+
+interface TableHTMLExportOptions extends TableExportOptions {
+  readonly includeHeaders?: boolean;
+  readonly includeTitle?: boolean;
+}
+
+type DashboardExportFormat = 'html';
+type DashboardDataMode = 'embedded' | 'external';
+
+interface DashboardExportOptions {
+  readonly format?: DashboardExportFormat;
+  readonly output: string;
+  readonly data?: DashboardDataMode;
+  readonly title?: string;
+  readonly description?: string;
+  readonly logo?: string;
+  readonly theme?: ThemeConfig;
+  readonly background?: string;
+  readonly layout?: DashboardLayout;
+  readonly fontFamily?: string;
+  readonly header?: DashboardHeaderConfig | string | false;
+  readonly footer?: DashboardFooterConfig | string | false;
+}
+
+interface DashboardExportFile {
+  readonly path: string;
+  readonly bytes: number;
+}
+
+interface DashboardExportResult {
+  readonly format: DashboardExportFormat;
+  readonly output: string;
+  readonly singleFile: boolean;
+  readonly data: DashboardDataMode;
+  readonly files: readonly DashboardExportFile[];
+}
+```
+
+## React
+
+```ts
+interface DataTableProps extends Omit<TableConfig, 'loading' | 'error'> {
+  sort?: TableSortState | null;
+  page?: number;
+  search?: string;
+  selectedRows?: readonly number[];
+  loading?: boolean;
+  error?: string | null;
+  style?: CSSProperties;
+}
+
+interface MetricProps extends Omit<MetricConfig, 'icon'> {
+  icon?: string;
+  style?: CSSProperties;
+}
+
+interface ChartProps extends ChartConfig {
+  style?: CSSProperties;
+}
+
+interface DashboardProps extends Omit<DashboardConfig, 'components'> {
+  components?: readonly DashboardComponent[];
+  children?: ReactNode;
+  style?: CSSProperties;
+}
+```
+
+| Component         | Handle                                                                      |
+| ----------------- | --------------------------------------------------------------------------- |
+| `Chart`           | `ChartHandle`: `getChart()`, `getElement()`                                 |
+| `DataTable`       | `DataTableHandle`: `getTable()`, `getElement()`                             |
+| `Metric`          | `MetricHandle`: `getMetric()`, `getElement()`                               |
+| `Dashboard`       | `DashboardHandle`: `getDashboard()`, `getElement()`                         |
+| `DashboardWidget` | `DashboardWidgetHandle`: `getDashboard()`, `getWidget(id?)`, `getElement()` |
+
+## Errors
+
+```ts
+type NumvizErrorCode =
+  | 'INVALID_CONFIG'
+  | 'INVALID_TYPE'
+  | 'INVALID_DATA'
+  | 'INVALID_CONTAINER'
+  | 'CONTAINER_NOT_FOUND'
+  | 'NO_DOM'
+  | 'DESTROYED'
+  | 'EXPORT_FAILED';
+
+class NumvizError extends Error {
+  readonly code: NumvizErrorCode;
+  readonly path?: string;
+  readonly details?: Record<string, unknown>;
+}
+
+function isNumvizError(value: unknown): value is NumvizError;
+```
+
+## Next steps
+
+- [Charts](/numviz/docs/charts)
+- [Tables](/numviz/docs/tables)
+- [Troubleshooting](/numviz/docs/troubleshooting)

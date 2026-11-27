@@ -1,0 +1,445 @@
+---
+title: Operations reference
+description: Joins, reshaping, windows, time series, validation, pipelines, data spaces and the standalone row functions.
+related:
+  - /numiq/docs/api/datasets
+  - /numiq/docs/api/statistics
+---
+
+## Joins
+
+```ts
+type JoinHow = 'inner' | 'left' | 'right' | 'full';
+
+interface JoinOptions {
+  readonly on?: string | readonly string[];
+  readonly leftOn?: string | readonly string[];
+  readonly rightOn?: string | readonly string[];
+  readonly how?: JoinHow; // default "inner"
+  readonly suffixes?: readonly [string, string]; // default ["_left", "_right"]
+  readonly nullsMatch?: boolean; // default false
+  readonly maxRows?: number; // default 1_000_000
+}
+
+interface JoinReport {
+  readonly how: JoinHow;
+  readonly leftKeys: readonly string[];
+  readonly rightKeys: readonly string[];
+  readonly rowCount: number;
+  readonly matched: number;
+  readonly leftUnmatched: number;
+  readonly rightUnmatched: number;
+  readonly collisions: readonly string[];
+}
+
+interface JoinResult {
+  readonly rows: readonly Row[];
+  readonly columns: readonly string[];
+  readonly report: JoinReport;
+}
+
+function joinTables(
+  leftRows: readonly Row[],
+  leftColumns: readonly string[],
+  rightRows: readonly Row[],
+  rightColumns: readonly string[],
+  options: JoinOptions,
+): JoinResult;
+```
+
+Pass `on` for identically named keys, or `leftOn` + `rightOn` for a mapped key. A right key
+column that duplicates its left partner is dropped. Only colliding non-key columns are
+suffixed.
+
+## Reshaping
+
+```ts
+type PivotAggregation = 'first' | 'last' | 'sum' | 'mean' | 'min' | 'max' | 'count';
+
+interface PivotOptions {
+  readonly columns: string;
+  readonly values: string;
+  readonly aggregate?: PivotAggregation; // default "first"
+  readonly index?: readonly string[];
+  readonly prefix?: string;
+}
+
+interface PivotResult {
+  readonly rows: readonly Row[];
+  readonly columns: readonly string[];
+  readonly pivoted: readonly string[];
+  readonly collapsed: number;
+}
+
+interface MeltOptions {
+  readonly idVars?: string | readonly string[];
+  readonly valueVars?: string | readonly string[];
+  readonly variableName?: string; // default "variable"
+  readonly valueName?: string; // default "value"
+  readonly dropMissing?: boolean; // default false
+}
+
+interface ConcatOptions {
+  readonly columns?: 'union' | 'strict'; // default "union"
+}
+
+function pivotRows(
+  rows: readonly Row[],
+  columns: readonly string[],
+  options: PivotOptions,
+): PivotResult;
+function meltRows(
+  rows: readonly Row[],
+  columns: readonly string[],
+  options?: MeltOptions,
+): PreparedTable;
+function concatRows(
+  tables: readonly { rows: readonly Row[]; columns: readonly string[] }[],
+  options?: ConcatOptions,
+): PreparedTable;
+```
+
+`meltRows` throws `ValidationError` when neither `idVars` nor `valueVars` is given.
+
+## Window functions
+
+```ts
+type WindowDirection = 'asc' | 'desc';
+
+interface WindowOrderKey {
+  readonly column: string;
+  readonly direction?: WindowDirection;
+}
+
+interface WindowOptions {
+  readonly orderBy: string | WindowOrderKey | readonly (string | WindowOrderKey)[];
+  readonly partitionBy?: string | readonly string[];
+}
+
+interface OffsetOptions extends WindowOptions {
+  readonly offset?: number; // default 1
+  readonly fill?: unknown; // default null
+}
+
+interface CumulativeOptions extends WindowOptions {
+  readonly ignoreMissing?: boolean; // default false
+}
+
+interface RollingOptions extends WindowOptions {
+  readonly window: number;
+  readonly minPeriods?: number; // default window
+  readonly ignoreMissing?: boolean; // default false
+}
+
+interface WindowRowContext {
+  readonly rowNumber: number;
+  readonly index: number;
+  readonly row: Readonly<Row>;
+  readonly partition: number;
+  readonly rows: readonly Readonly<Row>[];
+}
+
+interface WindowColumnOptions extends WindowOptions {
+  readonly fn: (context: WindowRowContext) => unknown;
+}
+
+interface RankedRow {
+  readonly index: number;
+  readonly rank: number;
+}
+
+function windowColumn(rows, columns, name, options: WindowColumnOptions): PreparedTable;
+function rowNumber(rows, columns, name, options: WindowOptions): PreparedTable;
+function rank(rows, columns, name, options: WindowOptions): PreparedTable;
+function denseRank(rows, columns, name, options: WindowOptions): PreparedTable;
+function rankRows(rows, columns, options: WindowOptions): RankedRow[];
+function lag(rows, columns, name, column, options: OffsetOptions): PreparedTable;
+function lead(rows, columns, name, column, options: OffsetOptions): PreparedTable;
+function cumSum(rows, columns, name, column, options: CumulativeOptions): PreparedTable;
+function cumMean(rows, columns, name, column, options: CumulativeOptions): PreparedTable;
+function rollingSum(rows, columns, name, column, options: RollingOptions): PreparedTable;
+function rollingMean(rows, columns, name, column, options: RollingOptions): PreparedTable;
+function rollingMin(rows, columns, name, column, options: RollingOptions): PreparedTable;
+function rollingMax(rows, columns, name, column, options: RollingOptions): PreparedTable;
+function rollingStd(rows, columns, name, column, options: RollingOptions): PreparedTable;
+```
+
+`orderBy` is required in every variant: a window value has no meaning without a defined
+order. Naming an existing column throws `ValidationError`.
+
+## Time series
+
+```ts
+type TimeInterval = 'hour' | 'day' | 'week' | 'month' | 'quarter' | 'year';
+
+interface SortByTimeOptions {
+  readonly direction?: 'asc' | 'desc'; // default "asc"
+}
+
+type ResampleAggregation = 'sum' | 'mean' | 'median' | 'min' | 'max' | 'count' | 'first' | 'last';
+
+interface ResampleOptions {
+  readonly every: TimeInterval;
+  readonly timeColumn: string;
+  readonly aggregate: Readonly<Record<string, ResampleAggregation>>;
+  readonly label?: string; // default "period"
+  readonly onMissingTime?: 'drop' | 'error'; // default "drop"
+}
+
+interface ResampleResult {
+  readonly rows: readonly Row[];
+  readonly columns: readonly string[];
+  readonly bucketed: number;
+  readonly dropped: number;
+}
+
+function toTime(value: unknown, context: string): Date | null;
+function periodStart(date: Date, interval: TimeInterval): Date;
+function periodLabel(start: Date, interval: TimeInterval): string;
+function sortByTime(rows, columns, timeColumn, options?: SortByTimeOptions): PreparedTable;
+function extractPeriod(rows, columns, name, timeColumn, interval: TimeInterval): PreparedTable;
+function resample(rows, columns, options: ResampleOptions): ResampleResult;
+function periodBuckets(rows, columns, timeColumn, interval: TimeInterval): string[];
+```
+
+`toTime` accepts a `Date` or an ISO `YYYY-MM-DD` / `YYYY-MM-DDTHH:mm:ss` string. Anything
+else throws `ValidationError` with the supplied `context` in the message. All calendar
+arithmetic is UTC; weeks start Monday.
+
+## Validation
+
+```ts
+interface ColumnRules {
+  readonly type?: ColumnType;
+  readonly nullable?: boolean;
+  readonly min?: number | string | Date;
+  readonly max?: number | string | Date;
+  readonly allowed?: readonly unknown[];
+  readonly pattern?: string;
+  readonly minLength?: number;
+  readonly maxLength?: number;
+  readonly unique?: boolean | readonly string[];
+  readonly validate?: (value: unknown, row: Readonly<Row>, index: number) => boolean | string;
+}
+
+type ValidationSchema = Readonly<Record<string, ColumnRules>>;
+
+interface ValidationIssue {
+  readonly code: string;
+  readonly message: string;
+  readonly column: string;
+  readonly row: number;
+  readonly value: unknown;
+  readonly expected: string;
+}
+
+interface ValidationReport {
+  readonly valid: boolean;
+  readonly rowCount: number;
+  readonly columnCount: number;
+  readonly checked: number;
+  readonly issues: readonly ValidationIssue[];
+  readonly issueCount: number;
+  readonly truncated: boolean;
+  readonly invalidRows: number;
+  readonly byCode: Readonly<Record<string, number>>;
+}
+
+interface ValidateOptions {
+  readonly maxIssues?: number; // default 100
+  readonly columnsOnly?: boolean; // default false
+}
+
+function validateRows(
+  rows: readonly Row[],
+  columns: readonly string[],
+  schema: ValidationSchema,
+  options?: ValidateOptions,
+): ValidationReport;
+
+function inferSchema(rows: readonly Row[], columns: readonly string[]): Record<string, ColumnRules>;
+```
+
+Issue codes include `MISSING_COLUMN`, `NULL_NOT_ALLOWED`, `TYPE_MISMATCH`, `BELOW_MINIMUM`,
+`ABOVE_MAXIMUM`, `NOT_ALLOWED`, `PATTERN_MISMATCH`, `TOO_SHORT`, `TOO_LONG`,
+`DUPLICATE_VALUE`, `CUSTOM_VALIDATOR_FAILED` and `CUSTOM_VALIDATOR_THREW`, plus
+`NOT_ORDERABLE`, `PATTERN_NOT_APPLICABLE` and `LENGTH_NOT_APPLICABLE` for rules that cannot
+apply to a value. `ValidationReport.byCode` counts issues per code.
+
+## Pipelines
+
+```ts
+type StepKind = 'load' | 'transform' | 'validate' | 'tap';
+type StepTiming = 'sync' | 'async';
+
+interface StepReport {
+  readonly name: string;
+  readonly kind: StepKind;
+  readonly timing: StepTiming;
+  readonly durationMs: number;
+  readonly rows: number;
+  readonly columns: readonly string[];
+  readonly error?: { readonly name: string; readonly message: string };
+}
+
+interface LineageEntry {
+  readonly index: number;
+  readonly name: string;
+  readonly kind: StepKind;
+  readonly columns: readonly string[];
+  readonly rows: number;
+  readonly addedColumns: readonly string[];
+  readonly removedColumns: readonly string[];
+}
+
+interface PipelineResult {
+  readonly dataset: Dataset | null;
+  readonly ok: boolean;
+  readonly steps: readonly StepReport[];
+  readonly lineage: readonly LineageEntry[];
+  readonly failedStep: string | null;
+  readonly failedIndex: number | null;
+  readonly durationMs: number;
+  readonly executed: number;
+  readonly total: number;
+}
+
+interface PipelineDescription {
+  readonly name: string;
+  readonly steps: readonly {
+    index: number;
+    name: string;
+    kind: StepKind;
+    custom: boolean;
+    schema?: ValidationSchema;
+  }[];
+  readonly reproducible: boolean;
+  readonly nonDeterministic: readonly string[];
+  readonly built: boolean;
+}
+
+interface RunOptions {
+  readonly throwOnError?: boolean; // default false
+}
+
+interface PipelineOptions {
+  readonly name?: string;
+}
+
+class Pipeline {
+  readonly name: string;
+  readonly length: number;
+  readonly stepNames: readonly string[];
+  readonly built: boolean;
+  readonly lineage: readonly LineageEntry[];
+  load(loader: (context: StepContext) => unknown, options?: { name?: string }): Pipeline;
+  transform(transformer: (data: Dataset) => unknown, options?: { name?: string }): Pipeline;
+  validate(schema: ValidationSchema | ValidateStep, options?: { name?: string }): Pipeline;
+  tap(observer: (data: Dataset) => unknown, options?: { name?: string }): Pipeline;
+  build(): Pipeline;
+  run(options?: RunOptions): Promise<PipelineResult>;
+  describe(): PipelineDescription;
+}
+
+function pipeline(options?: PipelineOptions): Pipeline;
+
+class PipelineError extends NumiqError {
+  readonly step: string;
+  readonly stepIndex: number;
+  readonly stepKind: StepKind;
+  readonly original: unknown;
+}
+```
+
+Steps may return a `Dataset`, a promise of one, or the step context. `build()` seals the
+pipeline; a later `add` throws `ValidationError`.
+
+## Data spaces
+
+```ts
+type RelationshipType = 'one-to-one' | 'one-to-many' | 'many-to-one' | 'many-to-many';
+
+interface Relationship {
+  readonly name: string;
+  readonly from: string;
+  readonly fromColumn: string;
+  readonly to: string;
+  readonly toColumn: string;
+  readonly type: RelationshipType;
+}
+
+interface RelationshipCheck {
+  readonly relationship: Relationship;
+  readonly orphans: readonly OrphanReference[];
+  readonly duplicates: readonly DuplicateKey[];
+  readonly nullKeys: number;
+  readonly valid: boolean;
+}
+
+interface OrphanReference {
+  readonly from: string;
+  readonly fromColumn: string;
+  readonly to: string;
+  readonly toColumn: string;
+  readonly value: unknown;
+  readonly rowIndex: number;
+}
+
+interface DatasetSummary {
+  readonly name: string;
+  readonly rowCount: number;
+  readonly columnCount: number;
+  readonly columns: readonly string[];
+  readonly metadata: Readonly<Record<string, unknown>>;
+  readonly outgoing: readonly string[];
+  readonly incoming: readonly string[];
+}
+
+class DataSpace {
+  readonly name: string;
+  readonly size: number;
+  readonly relationshipCount: number;
+  addDataset(name: string, dataset: Dataset): this;
+  replaceDataset(name: string, dataset: Dataset): this;
+  renameDataset(from: string, to: string): this;
+  removeDataset(name: string): this;
+  has(name: string): boolean;
+  dataset(name: string): Dataset;
+  datasetNames(): readonly string[];
+  datasets(): readonly Dataset[];
+  setMetadata(name: string, key: string, value: unknown): this;
+  createRelationship(options: RelationshipOptions): Relationship;
+  relationships(): readonly Relationship[];
+  check(): readonly RelationshipCheck[];
+  join(from: string, to: string, options?: SpaceJoinOptions): Dataset;
+  aggregate(from: string, to: string, spec: AggregateSpec, options: SpaceAggregateOptions): Dataset;
+  filterRelated(from: string, to: string, predicate: (row: Readonly<Row>) => boolean): Dataset;
+  describeDataset(name: string): DatasetSummary;
+  describe(): readonly DatasetSummary[];
+}
+
+function createDataSpace(name: string): DataSpace;
+```
+
+`SpaceAggregateOptions` requires `groupBy`. `SpaceJoinOptions` accepts `how`,
+`suffixes`, `nullsMatch`, `maxRows` and `relationship` (the relationship name to use when
+several connect the same pair).
+
+## Standalone column builders
+
+```ts
+function addConditionalColumn(
+  rows: readonly Row[],
+  columns: readonly string[],
+  name: string,
+  rules: readonly ConditionalRule[],
+  options?: ConditionalColumnOptions,
+): PreparedTable;
+```
+
+The function behind `Dataset.addConditionalColumn`.
+
+## Next
+
+- [Compatibility](/numiq/docs/compatibility)
+- [Numviz documentation](/numviz/docs)

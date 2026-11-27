@@ -1,0 +1,168 @@
+---
+title: Getting started
+description: Install Numviz, render a chart, a table and a KPI card, then update them without rebuilding.
+related:
+  - /numviz/docs/installation
+  - /numviz/docs/charts
+  - /numviz/docs/tables
+---
+
+Every Numviz engine follows the same shape: a factory returns an instance, you call
+`render()` with a selector or element, and later calls update or destroy it.
+
+## Install
+
+```bash
+npm install @munachi-me/numviz
+```
+
+## Render a chart
+
+```html title="index.html"
+<div id="chart"></div>
+<script type="module" src="/main.js"></script>
+```
+
+```js title="main.js"
+import { createChart } from '@munachi-me/numviz';
+
+const chart = createChart({
+  type: 'bar',
+  data: [
+    { month: 'Jan', revenue: 32000 },
+    { month: 'Feb', revenue: 41000 },
+    { month: 'Mar', revenue: 38500 },
+  ],
+  x: 'month',
+  y: 'revenue',
+  title: 'Monthly revenue',
+});
+
+chart.render('#chart');
+```
+
+The chart is an SVG built with the target element's own `document`, so it also works inside
+an iframe.
+
+## Update instead of rebuild
+
+```ts
+chart.update({
+  type: 'line',
+  data: [
+    { month: 'Jan', revenue: 32000 },
+    { month: 'Feb', revenue: 41000 },
+    { month: 'Mar', revenue: 38500 },
+    { month: 'Apr', revenue: 42000 },
+  ],
+  x: 'month',
+  y: 'revenue',
+});
+
+chart.destroy(); // remove the DOM and release listeners
+```
+
+`update()` replaces the configuration and redraws when the chart is rendered. `destroy()` is
+idempotent: calling it twice is safe.
+
+## Render a table
+
+```js
+import { createTable } from '@munachi-me/numviz';
+
+const table = createTable({
+  data: employees,
+  title: 'Employees',
+  sortable: true,
+  searchable: true,
+  pagination: true,
+  pageSize: 10,
+  rowNumbers: true,
+  columns: [
+    { field: 'name', label: 'Employee', width: 220 },
+    { field: 'salary', label: 'Salary', format: 'currency', currency: 'USD' },
+    { field: 'joined', label: 'Joined', format: 'date' },
+  ],
+});
+
+table.render('#table');
+```
+
+Only the visible page is rendered, so a 100,000-row table costs the same as a 20-row one.
+
+## Render a KPI card
+
+```js
+import { createMetric } from '@munachi-me/numviz';
+
+const revenue = createMetric({
+  name: 'Total Revenue',
+  data: rows,
+  column: 'revenue',
+  aggregation: 'sum',
+  format: 'currency',
+  comparison: {
+    data: previousPeriod,
+    column: 'revenue',
+    aggregation: 'sum',
+    label: 'vs previous period',
+  },
+});
+
+revenue.result.value; // computed immediately, before rendering
+revenue.result.comparison?.percentageChange;
+revenue.render('#revenue');
+```
+
+`createMetric()` computes without touching the DOM, so a metric is usable in a test, an
+export, or a server-side calculation.
+
+## Render a dashboard
+
+```js
+import { createDashboard } from '@munachi-me/numviz';
+
+const dashboard = createDashboard({
+  title: 'Sales Analytics',
+  layout: { columns: { base: 1, sm: 2, lg: 4 }, gap: 16 },
+  components: [
+    {
+      id: 'revenue',
+      type: 'metric',
+      name: 'Total Revenue',
+      data: revenueRows,
+      column: 'revenue',
+      aggregation: 'sum',
+      format: 'currency',
+    },
+    {
+      id: 'sales',
+      type: 'chart',
+      chartType: 'bar',
+      data: monthlyRows,
+      x: 'month',
+      y: 'revenue',
+      layout: { columnSpan: 2 },
+    },
+    { id: 'records', type: 'table', data: employeeRows, layout: { columnSpan: 2 } },
+  ],
+});
+
+dashboard.render('#dashboard');
+```
+
+## Understand the outputs
+
+| Call                | Result                                                     |
+| ------------------- | ---------------------------------------------------------- |
+| `chart.config`      | The resolved configuration, after defaults and aliases     |
+| `chart.data`        | The normalized dataset (`columns`, `rows`)                 |
+| `metric.result`     | The computed value, formatted value, counts and comparison |
+| `table.getState()`  | Sort, page, search, selection and page size                |
+| `dashboard.widgets` | One entry per component, with its instance and element     |
+
+## Next steps
+
+- [Charts](/numviz/docs/charts) — every chart type and option.
+- [Tables](/numviz/docs/tables) — columns, formatting and state.
+- [Dashboards](/numviz/docs/dashboards) — layout, filters and export.

@@ -1,0 +1,351 @@
+---
+title: Data loading
+description: Load CSV, TSV and JSON from local files, URLs, browser blobs and in-memory text, and read the import report that every load produces.
+related:
+  - /numiq/docs/datasets
+  - /numiq/docs/api/io
+---
+
+Numiq has two families of entry points: asynchronous `load*` functions that perform I/O,
+and synchronous `parse*` functions for text you already hold.
+
+| Function                        | Input                                                | Environment                                       | Returns            |
+| ------------------------------- | ---------------------------------------------------- | ------------------------------------------------- | ------------------ |
+| `loadCSV(source, options?)`     | Filename, `URL`, `Blob`, `ArrayBuffer`, `Uint8Array` | Node entry reads files; all entries read the rest | `Promise<Dataset>` |
+| `loadTSV(source, options?)`     | Same                                                 | Same                                              | `Promise<Dataset>` |
+| `loadJSON(source, options?)`    | Same                                                 | Same                                              | `Promise<Dataset>` |
+| `loadURL(url, options?)`        | `string \| URL`                                      | Node and browser                                  | `Promise<Dataset>` |
+| `parseDelimited(text, options)` | Text plus `format: "csv" \| "tsv"`                   | Node and browser                                  | `Dataset`          |
+| `parseJSON(input, options?)`    | JSON text or an already-parsed value                 | Node and browser                                  | `Dataset`          |
+| `useSampleDataset()`            | —                                                    | Node and browser                                  | `Promise<Dataset>` |
+
+## Local files
+
+Local files are read from a `dataset/` folder in the project root, resolved from
+`process.cwd()`:
+
+```text
+my-project/
+├── dataset/
+│   ├── sales.csv
+│   └── customers.json
+├── node_modules/
+├── package.json
+└── src/
+    └── index.ts
+```
+
+```ts
+import { loadCSV, loadJSON } from '@munachi-me/numiq';
+
+const sales = await loadCSV('sales.csv'); // ./dataset/sales.csv
+const customers = await loadJSON('customers.json');
+```
+
+Pass only the filename. These are all rejected:
+
+```ts
+await loadCSV('./dataset/sales.csv'); // path separators are not allowed
+await loadCSV('/abs/path/sales.csv'); // absolute paths are not allowed
+await loadCSV('../sales.csv'); // parent traversal is not allowed
+```
+
+The path is resolved with `realpath` before use, so a symlink inside `dataset/` that points
+outside it is refused too.
+
+If your process runs from a different directory — a monorepo tool, a test runner, a server
+started elsewhere — pass the project root explicitly:
+
+```ts
+const sales = await loadCSV('sales.csv', { datasetDir: '/path/to/project' });
+```
+
+### Missing folder
+
+A missing `dataset/` folder raises an `ImportError` that names the resolved path, rather
+than a generic `ENOENT`.
+
+### Browser restriction
+
+The browser-safe entry has no filesystem reader. Passing a local filename there raises an
+`EnvironmentError` explaining that the Node.js build is required, instead of failing at
+bundle time or silently returning nothing.
+
+## Browser `File` and `Blob` objects
+
+```ts
+import { loadCSV } from '@munachi-me/numiq';
+
+const data = await loadCSV(fileInput.files[0]);
+```
+
+`File` is a `Blob`, so the same call works for both. The loader you call decides the
+format, and a `File` whose name declares a different one is refused rather than guessed:
+
+```ts
+await loadCSV(new File([text], 'sales.csv')); // ok
+await loadCSV(new File([text], 'sales.json')); // FormatError: declares "json"
+```
+
+Raw bytes are accepted as well, with no format option needed:
+
+```ts
+const bytes = new TextEncoder().encode('a,b\n1,2\n');
+
+const data = await loadCSV(bytes); // parsed as CSV
+const other = await loadJSON(new TextEncoder().encode(jsonText));
+```
+
+A UTF-8 byte-order mark is stripped for you.
+
+## In-memory text
+
+```ts
+import { parseDelimited, parseJSON } from '@munachi-me/numiq';
+
+const a = parseDelimited('a,b\n1,2\n', { format: 'csv' });
+const b = parseJSON('[{"a":1}]');
+```
+
+`parseDelimited` requires `format`, because a string of text carries no extension. Both
+parsers are synchronous; only the `load*` functions are asynchronous.
+
+## URLs
+
+```ts
+import { loadURL } from '@munachi-me/numiq';
+
+const data = await loadURL('https://example.com/sales.csv');
+```
+
+Format resolution order:
+
+1. An explicit `format` option.
+2. The URL path extension (`.csv`, `.tsv`, `.json`).
+3. The response `content-type` header.
+
+If none of the three identifies a supported format, the call fails with a `FormatError`
+rather than guessing.
+
+| Option      | Default  | Meaning                                           |
+| ----------- | -------- | ------------------------------------------------- |
+| `format`    | resolved | `"csv"`, `"tsv"` or `"json"`; overrides detection |
+| `headers`   | —        | Extra request headers                             |
+| `timeoutMs` | `30000`  | Request timeout in milliseconds                   |
+| `signal`    | —        | `AbortSignal` to cancel the request               |
+| `name`      | derived  | Dataset name                                      |
+| `metadata`  | `{}`     | Arbitrary metadata stored on the dataset          |
+
+A non-2xx response raises an `ImportError` that carries `status` and `source`.
+
+## CSV and TSV options
+
+| Option          | Default   | Meaning                                   |
+| --------------- | --------- | ----------------------------------------- |
+| `delimiter`     | detected  | Single-character field separator          |
+| `header`        | `true`    | Treat the first row as column names       |
+| `columns`       | —         | Names to use when `header` is `false`     |
+| `skipRows`      | `0`       | Rows to discard before the header         |
+| `schema`        | —         | Explicit per-column types                 |
+| `onInvalid`     | `"error"` | `"error"` or `"null"` for failed casts    |
+| `onRaggedRow`   | `"error"` | `"error"` or `"pad"` for wrong-width rows |
+| `normalization` | —         | Cell policy overrides                     |
+
+Delimiters are detected from several sampled lines, not just the first, so a preamble line
+cannot mislead detection. You can also call `detectDelimiter(text)` directly, or tokenize
+without building a dataset with `tokenize(text, delimiter)`.
+
+Quoted fields follow RFC 4180: doubled quotes escape a quote, and delimiters and newlines
+inside quotes are literal.
+
+```ts
+const data = await loadCSV('export.csv', {
+  skipRows: 2,
+  header: false,
+  columns: ['id', 'product', 'amount'],
+  onRaggedRow: 'pad',
+});
+```
+
+## JSON options
+
+`loadJSON` and `parseJSON` accept three shapes:
+
+```ts
+// 1. Array of records
+parseJSON('[{"id":1,"name":"Ada"}]');
+
+// 2. Array of arrays, with column names
+parseJSON('[["id","name"],[1,"Ada"]]', { columns: ['id', 'name'] });
+
+// 3. Column-oriented object of parallel arrays
+parseJSON({ id: [1, 2], name: ['Ada', 'Lin'] });
+```
+
+| Option          | Default   | Meaning                                |
+| --------------- | --------- | -------------------------------------- |
+| `columns`       | inferred  | Column names for array-of-arrays input |
+| `skipRows`      | `0`       | Records to discard                     |
+| `schema`        | —         | Explicit per-column types              |
+| `onInvalid`     | `"error"` | `"error"` or `"null"` for failed casts |
+| `normalization` | —         | Cell policy overrides                  |
+
+Nested objects and arrays are kept as they are and typed `mixed`; Numiq does not flatten
+them. Flatten the value before loading if you need one column per leaf.
+
+## Type casting at import time
+
+Declare types with `schema`:
+
+```ts
+const data = await loadCSV('sales.csv', {
+  schema: {
+    amount: 'number',
+    quantity: 'integer',
+    active: 'boolean',
+    ordered_on: 'date',
+    updated_at: 'datetime',
+    opens_at: 'time',
+  },
+});
+```
+
+Supported types: `string`, `number`, `integer`, `boolean`, `date`, `datetime`, `time`.
+Aliases such as `int`, `float`, `text` and `bool` are accepted, and a descriptor form
+`{ type: "date", format: "YYYY-MM-DD" }` is allowed. The `format` field is reserved for a
+future release and currently has no effect.
+
+Casting is strict:
+
+- `date` and `datetime` require ISO input (`YYYY-MM-DD`, `YYYY-MM-DDTHH:MM:SS`) and produce
+  real `Date` objects at UTC midnight.
+- `time` stays a canonical `HH:MM:SS` string, because a wall-clock time has no date to
+  anchor a `Date` to.
+- A failed cast during a load throws a `FormatError` naming the row and column, unless
+  `onInvalid: "null"` is set.
+
+Without a schema, Numiq infers types for reporting (`dtypes`) but never converts date-like
+strings into `Date` objects. What you see in `data` is what the file contained.
+
+## Normalization
+
+Cell normalization is conservative by default, because aggressive coercion destroys data.
+
+| Behaviour                                 | Default |
+| ----------------------------------------- | ------- |
+| Trim surrounding whitespace               | Off     |
+| Empty string becomes `null`               | On      |
+| Infer numbers and booleans                | On      |
+| `NA`, `N/A`, `null`, `NULL` become `null` | **Off** |
+
+`NA` is Namibia's country code and `null` is a surname, so those tokens are opt-in:
+
+```ts
+await loadCSV('data.csv', {
+  normalization: { nullValues: ['', 'NA', 'N/A', 'null'] },
+});
+```
+
+Other guarantees:
+
+- Integers beyond `Number.MAX_SAFE_INTEGER` stay strings and raise an `unsafe-integer`
+  warning instead of being rounded.
+- Leading-zero values such as `007` stay strings, preserving identifiers.
+- Values beginning with `+` stay strings, preserving phone numbers.
+- `inferTypes: false` leaves every cell as the text that was read.
+
+```ts
+const data = parseDelimited('id\n9007199254740993\n007\n+1555\n', { format: 'csv' });
+
+data.data;
+// [{ id: "9007199254740993" }, { id: "007" }, { id: "+1555" }]
+
+data.importReport.warnings[0].code; // "unsafe-integer"
+```
+
+## The import report
+
+Every loader returns a frozen report describing the import:
+
+```ts
+const report = data.importReport;
+
+report?.format; // "csv"
+report?.rowsRead; // 50
+report?.rowsImported; // 50
+report?.columns; // ["order_id", "date", ...]
+report?.missingByColumn; // { order_id: 0, date: 0, ... }
+report?.warnings; // []
+report?.normalization; // the policy that was applied
+report?.delimiter; // "," for delimited input
+report?.contentType; // the response content type, for URLs
+```
+
+`importReport` is `null` for datasets built with `createDataset`, and for derived datasets
+such as `head()` and `tail()`.
+
+## Warnings versus errors
+
+| Situation                          | Behaviour                                |
+| ---------------------------------- | ---------------------------------------- |
+| Ragged row, `onRaggedRow: "pad"`   | Row padded, warning recorded             |
+| Failed cast, `onInvalid: "null"`   | Cell becomes `null`, warning recorded    |
+| Unsafe integer                     | Value kept as a string, warning recorded |
+| Ragged row, `onRaggedRow: "error"` | `FormatError` thrown                     |
+| Failed cast, `onInvalid: "error"`  | `FormatError` thrown                     |
+| Missing `dataset/` folder          | `ImportError` thrown                     |
+| Local path in a browser            | `EnvironmentError` thrown                |
+| Undetectable format for a URL      | `FormatError` thrown                     |
+
+Warnings are recorded, never thrown. Structural problems throw.
+
+## Large files
+
+`parseDelimited()` needs the whole file in memory. When that is too much, read it a batch at
+a time:
+
+```ts
+import { chunkDelimited } from '@munachi-me/numiq';
+
+for (const chunk of chunkDelimited(text, 'csv', { chunkSize: 10_000 })) {
+  // each chunk is a complete dataset with the same columns
+}
+```
+
+Chunks are lazy: nothing parses until you ask for it. `onProgress` receives
+`{ chunk, rows, delivered, lastRecord }` and can return `false` to stop; an `AbortSignal`
+stops it too.
+
+```ts
+import { reduceChunks, collectChunks } from '@munachi-me/numiq';
+
+// Fold each chunk into a running total and drop the rows
+const total = reduceChunks(text, 'csv', (sum, chunk) => sum + chunk.rowCount, 0, {
+  chunkSize: 10_000,
+});
+
+// Or keep everything as one dataset
+const all = collectChunks(text, 'csv', { chunkSize: 10_000 });
+```
+
+Splitting happens after tokenizing, not before, because a newline inside a quoted field is
+data. The gain is peak memory, not speed.
+
+## Sample dataset
+
+```ts
+import { useSampleDataset } from '@munachi-me/numiq';
+
+const sample = await useSampleDataset();
+
+sample.shape; // [50, 7]
+sample.importReport?.source; // "sample-sales"
+```
+
+The sample is a fixed 50-row sales table that ships inside the package, so it works without
+creating a `dataset/` folder and is identical on every call.
+
+## Next steps
+
+- [Dataset fundamentals](/numiq/docs/datasets) — what the loader gives you.
+- [API reference: I/O](/numiq/docs/api/io) — signatures for every loader and parser.

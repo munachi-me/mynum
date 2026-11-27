@@ -1,0 +1,245 @@
+---
+title: Reports and export
+description: Standalone HTML dashboards from Node.js, chart SVG and PNG export, table CSV/JSON/HTML export, and report presets.
+related:
+  - /numviz/docs/dashboards
+  - /numviz/docs/tables
+---
+
+Numviz has three kinds of export:
+
+1. **A dashboard as a static site** — `dashboard.export()` writes files. Node.js only.
+2. **A chart as SVG or PNG** — `chart.toSVG()` and `chart.toPNG()`.
+3. **A table as CSV, JSON or HTML** — `table.toCSV()`, `table.toJSON()`, `table.toHTML()`.
+
+Reports are dashboards with a preset layout and print defaults.
+
+## Reports
+
+```ts
+import { createReport } from '@munachi-me/numviz';
+
+const report = createReport({
+  type: 'executive',
+  metadata: { title: 'Q4 review', author: 'Finance' },
+  components: [
+    {
+      id: 'revenue',
+      type: 'metric',
+      name: 'Revenue',
+      data: rows,
+      column: 'revenue',
+      aggregation: 'sum',
+    },
+    { id: 'trend', type: 'chart', chartType: 'line', data: rows, x: 'month', y: 'revenue' },
+  ],
+});
+
+report.render('#report');
+report.print();
+await report.export({ output: './q4-report' });
+```
+
+`createReport(config)` takes every `DashboardConfig` field plus:
+
+```ts
+interface ReportConfig extends DashboardConfig {
+  type?: 'executive' | 'analytical' | 'kpi' | 'table' | 'charts' | 'dashboard'; // default "dashboard"
+  metadata?: {
+    title?: string;
+    author?: string;
+    subject?: string;
+    description?: string;
+    createdAt?: string;
+  };
+}
+```
+
+A `Report` is a `Dashboard` with `reportType`, `metadata` and a `print()` that returns the
+report.
+
+### Presets
+
+`REPORT_PRESETS` is exported for inspection and reuse:
+
+```ts
+import { REPORT_PRESETS } from '@munachi-me/numviz';
+
+REPORT_PRESETS.executive.layout;
+REPORT_PRESETS.kpi.print;
+```
+
+| Preset       | Columns                    | Gap  | Print page break |
+| ------------ | -------------------------- | ---- | ---------------- |
+| `executive`  | 1 → 2 → 4                  | 16px | `avoid`          |
+| `analytical` | 1 → 2 → 3                  | 18px | `avoid`          |
+| `kpi`        | 1 → 2 → 4, compact variant | 14px | `avoid`          |
+| `table`      | 1                          | 16px | `auto`           |
+| `charts`     | 1 → 2 → 2                  | 18px | `avoid`          |
+| `dashboard`  | 1 → 2 → 3                  | 16px | `avoid`          |
+
+Values you pass explicitly override the preset.
+
+## Standalone dashboard export
+
+`dashboard.export()` writes a finished static dashboard. The generated project carries its
+own Numviz runtime, so it runs without Numviz, React or a backend installed.
+
+```ts
+await dashboard.export({
+  format: 'html', // the only supported format
+  output: './dashboard',
+  data: 'embedded', // or "external"
+});
+```
+
+Creating a dashboard does not write files. Only `export()` does, and only in Node.js — in a
+browser it rejects with `EXPORT_FAILED`.
+
+### Options
+
+```ts
+interface DashboardExportOptions {
+  format?: 'html';
+  output: string; // directory, or a path ending in .html
+  data?: 'embedded' | 'external'; // default "embedded"
+  title?: string;
+  description?: string;
+  logo?: string; // URL or data URI
+  theme?: ThemeConfig;
+  background?: string;
+  layout?: DashboardLayout;
+  fontFamily?: string;
+  header?: DashboardHeaderConfig | string | false;
+  footer?: DashboardFooterConfig | string | false;
+}
+```
+
+Relative `output` paths resolve from `process.cwd()`.
+
+### Result
+
+```ts
+interface DashboardExportResult {
+  readonly format: 'html';
+  readonly output: string; // absolute path
+  readonly singleFile: boolean;
+  readonly data: 'embedded' | 'external';
+  readonly files: readonly { readonly path: string; readonly bytes: number }[];
+}
+```
+
+### Directory output
+
+```text
+dashboard/
+├── index.html
+├── assets/
+│   ├── styles.css
+│   ├── dashboard.js
+│   └── numviz/runtime.js
+├── data/data.json        # external data mode only
+└── README.md
+```
+
+`data: "external"` writes the component data to `data/data.json` and loads it at runtime.
+Serve the directory over HTTP: browsers block local JSON requests from `file://`.
+
+### Single-file output
+
+Pass an `output` ending in `.html`:
+
+```ts
+await dashboard.export({ output: './dist/report.html' });
+```
+
+The result is one portable file with `singleFile: true`. Single-file output requires embedded
+data; combining it with `data: "external"` throws `INVALID_CONFIG`.
+
+### Limitations
+
+- Custom components and custom filters contain render functions and cannot be serialized.
+  Exporting a dashboard that has one throws `INVALID_CONFIG`.
+- Export is Node-only.
+- The output is static HTML, CSS and JavaScript. Built-in filters, cross-filtering, chart and
+  table interactions and dashboard state keep working; custom code does not.
+- Data is serialized with `<` escaped inside generated scripts.
+
+### Deployment
+
+Copy the directory to any static host — GitHub Pages, Vercel, Netlify, S3, nginx. No server
+runtime is required.
+
+## Chart export
+
+```ts
+chart.render('#chart');
+
+const svg = chart.toSVG({ width: 1200, height: 720 });
+const png = await chart.toPNG({ scale: 2 });
+```
+
+```ts
+interface ChartExportOptions {
+  width?: number; // defaults to the rendered width
+  height?: number; // defaults to the rendered height
+  scale?: number; // applied when width and height are omitted
+  background?: string; // defaults to the chart theme background
+}
+
+interface ChartPNGExportOptions extends ChartExportOptions {
+  quality?: number; // 0 to 1, default 1
+}
+```
+
+- `toSVG()` returns a portable SVG string with inline theme tokens and chart styles. It
+  requires a rendered chart and throws `EXPORT_FAILED` otherwise.
+- `toPNG()` rasterizes through the browser image and canvas APIs. It rejects with
+  `EXPORT_FAILED` where canvas is unavailable.
+
+## Table export
+
+```ts
+const csv = table.toCSV({ scope: 'all', formulaProtection: true });
+const json = table.toJSON({ useLabels: true, pretty: true });
+const html = table.toHTML({ includeTitle: true });
+```
+
+| Option              | Applies to             | Default     |
+| ------------------- | ---------------------- | ----------- |
+| `scope`             | all three              | `"all"`     |
+| `includeHidden`     | all three              | `false`     |
+| `delimiter`         | CSV                    | `","`       |
+| `includeHeaders`    | CSV, JSON matrix, HTML | `true`      |
+| `bom`               | CSV                    | `false`     |
+| `lineEnding`        | CSV                    | `"\n"`      |
+| `formulaProtection` | CSV                    | `true`      |
+| `format`            | JSON                   | `"objects"` |
+| `useLabels`         | JSON                   | `false`     |
+| `raw`               | JSON                   | `false`     |
+| `pretty`            | JSON                   | `false`     |
+| `includeTitle`      | HTML                   | `false`     |
+
+Exports include filtered and sorted rows, use displayed labels and formatted cells by
+default, and respect `scope: "page"` for the current page only.
+
+CSV formula protection prefixes `=`, `+`, `-`, `@`, tab, carriage return and line feed with an
+apostrophe, including after leading whitespace or control characters. Genuine negative
+numbers keep their numeric form. Set `formulaProtection: false` only for trusted consumers.
+
+## Printing
+
+```ts
+dashboard.print({ hideFilters: true, hideHeader: false, pageBreak: 'avoid' });
+report.print();
+```
+
+`print()` requires a rendered instance and calls `window.print()` after applying print
+styles. Print styles hide filter controls and table toolbars, keep widgets together where
+possible and set a 12 mm page margin.
+
+## Next steps
+
+- [React and Next.js](/numviz/docs/react)
+- [Examples](/numviz/docs/examples)
+- [Troubleshooting](/numviz/docs/troubleshooting)

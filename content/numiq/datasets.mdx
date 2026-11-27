@@ -1,0 +1,231 @@
+---
+title: Dataset fundamentals
+description: Create a dataset, read its shape and columns, inspect values, and rely on immutability.
+related:
+  - /numiq/docs/data-loading
+  - /numiq/docs/transformation
+  - /numiq/docs/api/datasets
+---
+
+A `Dataset` is an immutable table: an ordered list of columns, a list of normalized rows,
+and the metadata that describes them. Everything you do to a dataset returns a new one.
+
+## Creating a dataset
+
+`createDataset()` accepts records, column-oriented arrays, or another dataset:
+
+```ts
+import { createDataset } from '@munachi-me/numiq';
+
+// From records
+createDataset([
+  { name: 'Ada', age: 36 },
+  { name: 'Lin', age: 41 },
+]);
+
+// From parallel arrays
+createDataset({ name: ['Ada', 'Lin'], age: [36, 41] });
+
+// With an explicit column order
+createDataset([{ a: 1, b: 2 }], { columns: ['b', 'a'] });
+```
+
+Hand-built rows go through the same cell normalization as a parsed file, so a numeric
+string becomes a number:
+
+```ts
+createDataset([{ a: '1' }]); // [{ a: 1 }]
+createDataset([{ a: '1' }], { normalization: { inferTypes: false } }); // [{ a: "1" }]
+```
+
+`createDataset` options:
+
+| Option          | Default                                   | Meaning                                           |
+| --------------- | ----------------------------------------- | ------------------------------------------------- |
+| `columns`       | union of record keys, in first-seen order | Column order; required for arrays of values       |
+| `name`          | `"Dataset"`                               | Dataset name, reported by `info()` and `toJSON()` |
+| `metadata`      | `{}`                                      | Arbitrary read-only metadata                      |
+| `normalization` | the import default policy                 | Cell policy applied to raw input                  |
+
+The `Dataset` class is exported as well, so `new Dataset(rows, options)` builds the same
+object. Prefer `createDataset`, which also accepts column-oriented input.
+
+## Properties
+
+| Member         | Type                                | Description                                 |
+| -------------- | ----------------------------------- | ------------------------------------------- |
+| `columns`      | `readonly string[]`                 | Column names, in order                      |
+| `shape`        | `readonly [number, number]`         | `[rows, columns]`                           |
+| `data`         | `readonly Row[]`                    | Rows as records (a copy)                    |
+| `rowCount`     | `number`                            | Number of rows                              |
+| `columnCount`  | `number`                            | Number of columns                           |
+| `length`       | `number`                            | Alias of `rowCount`                         |
+| `empty`        | `boolean`                           | No rows or no columns                       |
+| `dtypes`       | `Record<string, DType>`             | Inferred type per column                    |
+| `schema`       | `Record<string, ColumnSchema>`      | Type and nullability per column             |
+| `name`         | `string`                            | Dataset name                                |
+| `metadata`     | `Readonly<Record<string, unknown>>` | Dataset metadata                            |
+| `importReport` | `ImportReport \| null`              | Loader metadata, `null` for hand-built data |
+
+`DType` is one of `string`, `number`, `integer`, `boolean`, `date`, `datetime`, `time`,
+`unknown` (no present values) or `mixed` (no single type fits every present value).
+
+```ts
+const data = createDataset(
+  [
+    { a: 1, b: 'x' },
+    { a: 2, b: 'y' },
+  ],
+  { name: 'demo' },
+);
+
+data.shape; // [2, 2]
+data.dtypes; // { a: "integer", b: "string" }
+data.schema.b; // { name: "b", type: "string", nullable: false }
+```
+
+## Inspection
+
+| Method              | Returns                                      |
+| ------------------- | -------------------------------------------- |
+| `head(n?)`          | First `n` rows (default 5)                   |
+| `tail(n?)`          | Last `n` rows (default 5)                    |
+| `info()`            | Shape, types and missing-value summary       |
+| `column(name)`      | Type, values, missing count and cardinality  |
+| `distinct(name)`    | Distinct present values, in first-seen order |
+| `unique(name)`      | Alias of `distinct`                          |
+| `uniqueCount(name)` | Number of distinct present values            |
+
+```ts
+import { useSampleDataset } from '@munachi-me/numiq';
+
+const sales = await useSampleDataset();
+
+sales.info();
+// {
+//   name: "sample-sales",
+//   rowCount: 50,
+//   columnCount: 7,
+//   shape: [50, 7],
+//   dtypes: { order_id: "string", date: "date", ... },
+//   missingValues: 0,
+//   memoryHint: "~5920 bytes"
+// }
+
+sales.column('region');
+// { name: "region", type: "string", values: [...], missing: 0, unique: 4 }
+```
+
+`column()` throws `ColumnNotFoundError` for an unknown name. The error carries `column` and
+`available`, so you can suggest a correction:
+
+```ts
+import { ColumnNotFoundError } from '@munachi-me/numiq';
+
+try {
+  sales.column('revenues');
+} catch (error) {
+  if (error instanceof ColumnNotFoundError) {
+    console.log(error.available);
+  }
+}
+```
+
+## Immutability
+
+Every read returns a defensive copy, and every transformation returns a new dataset.
+Mutating what you receive can never corrupt the dataset:
+
+```ts
+const rows = data.data;
+rows[0].a = 999;
+
+data.data[0].a; // still the original value
+```
+
+The cost is that `data` performs a deep copy. On 100,000 rows that is roughly 32 ms, so read
+it once rather than inside a loop.
+
+Derived datasets report `importReport` as `null`, because the source counts and warnings
+would no longer describe the rows they hold.
+
+## Chaining
+
+Because every method returns a `Dataset`, transformations chain:
+
+```ts
+const top = sales
+  .filter((row) => Number(row.revenue) > 100)
+  .sort('revenue', 'desc')
+  .select(['order_id', 'product', 'revenue'])
+  .limit(10);
+
+top.shape; // [10, 3]
+```
+
+Each step copies the data, so a chain of _k_ steps touches the rows _k_ times. That is the
+price of immutability and safe sharing.
+
+## Table output
+
+`table()` renders a box-drawing table:
+
+```ts
+console.log(sales.head(2).table());
+```
+
+```text
+┌─────┬──────────┬────────────┬───────────────────────┬─────────────┬────────┬──────────┬─────────┐
+│ idx │ order_id │ date       │ product               │ category    │ region │ quantity │ revenue │
+├─────┼──────────┼────────────┼───────────────────────┼─────────────┼────────┼──────────┼─────────┤
+│ 0   │ ORD-1001 │ 2026-01-04 │ Aurora Desk Lamp      │ Lighting    │ North  │ 1        │ 48      │
+│ 1   │ ORD-1002 │ 2026-01-11 │ Nimbus Wireless Mouse │ Accessories │ West   │ 2        │ 57      │
+└─────┴──────────┴────────────┴───────────────────────┴─────────────┴────────┴──────────┴─────────┘
+Showing 2 of 2 rows.
+2 rows × 7 columns
+```
+
+Rendering is bounded so a large dataset cannot flood a terminal:
+
+| Option         | Default | Meaning                               |
+| -------------- | ------- | ------------------------------------- |
+| `maxRows`      | `1000`  | Rows rendered; `Infinity` renders all |
+| `maxColumns`   | `20`    | Columns rendered before truncation    |
+| `maxCellWidth` | `28`    | Characters per cell before truncation |
+| `showIndex`    | `true`  | Render the `idx` row-label column     |
+| `showShape`    | `true`  | Render the trailing shape line        |
+
+Only the visible rows are formatted, so `table()` on a million-row dataset costs the same
+as on a thousand-row one.
+
+Related helpers:
+
+- `toTable(options?)` — deprecated alias of `table()`.
+- `display(options?)` — prints the table and returns the dataset, so it fits in a chain.
+- `renderTable(rows, columns, options?)` — the standalone renderer, for rows you have not
+  wrapped in a dataset.
+
+## Serialization
+
+`toJSON()` returns a plain, JSON-safe snapshot:
+
+```ts
+data.toJSON();
+// {
+//   name: "demo",
+//   columns: ["a", "b"],
+//   shape: [2, 2],
+//   rows: [{ a: 1, b: "x" }, { a: 2, b: "y" }],
+//   metadata: {}
+// }
+```
+
+For interchange with another tool, use the documented contract instead:
+`toInterchange()` writes `format: "numiq.table"`, `version: 1`, a descriptor per column and
+`null` for every missing value. See [API reference: I/O](/numiq/docs/api/io).
+
+## Next steps
+
+- [Data cleaning and transformation](/numiq/docs/transformation)
+- [Querying](/numiq/docs/querying)
+- [API reference: Dataset](/numiq/docs/api/datasets)

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 148 32" fill="none" role="img" aria-label="Numiq">
+  <g fill="#FF7900">
+    <rect x="0" y="5" width="6" height="22"/>
+    <rect x="20" y="5" width="6" height="22"/>
+    <path d="M6 5h6l14 22h-6L6 5Z"/>
+  </g>
+  <text x="36" y="23" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="20" font-weight="600" letter-spacing="-0.4" fill="#0A0A0A">Numiq</text>
+</svg>

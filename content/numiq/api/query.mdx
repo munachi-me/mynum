@@ -1,0 +1,214 @@
+---
+title: Query and aggregation reference
+description: The Query builder, GroupedDataset, aggregation operations and the standalone aggregate primitives.
+related:
+  - /numiq/docs/querying
+  - /numiq/docs/grouping
+---
+
+## Query
+
+```ts
+class Query<TResult> {
+  where(column: string, operator: NullOperator): Query<TResult>;
+  where(
+    column: string,
+    operator: SetOperator,
+    value: readonly unknown[],
+    options?: WhereOptions,
+  ): Query<TResult>;
+  where(
+    column: string,
+    operator: RangeOperator,
+    value: readonly [unknown, unknown],
+    options?: WhereOptions,
+  ): Query<TResult>;
+  where(
+    column: string,
+    operator: ComparisonOperator | StringOperator,
+    value: unknown,
+    options?: WhereOptions,
+  ): Query<TResult>;
+  // and(...) and or(...) accept the same four overloads
+  andGroup(build: (group: Query<TResult>) => Query<TResult>): Query<TResult>;
+  orGroup(build: (group: Query<TResult>) => Query<TResult>): Query<TResult>;
+  orderBy(column: string, direction?: QueryDirection): Query<TResult>;
+  select(columns: readonly string[]): Query<TResult>;
+  limit(count: number): Query<TResult>;
+  toString(): string;
+  execute(): TResult;
+}
+```
+
+Create one with `dataset.query()`. Every method returns a new query; nothing executes until
+`execute()`, which returns a new `Dataset`.
+
+### Operators
+
+```ts
+type ComparisonOperator = '=' | '!=' | '>' | '>=' | '<' | '<=';
+type SetOperator = 'in' | 'notIn';
+type RangeOperator = 'between';
+type StringOperator = 'contains' | 'startsWith' | 'endsWith';
+type NullOperator = 'isNull' | 'isNotNull';
+type QueryOperator =
+  ComparisonOperator | SetOperator | RangeOperator | StringOperator | NullOperator;
+type QueryDirection = 'asc' | 'desc';
+
+interface WhereOptions {
+  ignoreCase?: boolean; // string operators only
+}
+```
+
+| Operator group                         | Value required                                             |
+| -------------------------------------- | ---------------------------------------------------------- |
+| Comparison                             | Any value; compared by value and type                      |
+| `in` / `notIn`                         | A non-empty array; an empty array throws `ValidationError` |
+| `between`                              | A `[low, high]` tuple, inclusive                           |
+| `contains` / `startsWith` / `endsWith` | A string                                                   |
+| `isNull` / `isNotNull`                 | None                                                       |
+
+### Boolean structure
+
+`where()` starts the expression; `and()` and `or()` extend it. `and` binds tighter than
+`or`, so `.where(a).or(b).and(c)` means `a OR (b AND c)`. `andGroup()` and `orGroup()` add a
+parenthesised sub-expression.
+
+`toString()` renders the tree for logging. It is not a parser input.
+
+```ts
+data.query().where('revenue', '>', 500).and('region', 'in', ['North', 'West']).toString();
+// (revenue > 500 AND region in [2 values])
+```
+
+### Missing values
+
+A missing cell never satisfies a comparison, including `!=` and `notIn`. Add
+`.or("column", "isNull")` when missing rows belong in the result.
+
+### Errors
+
+| Situation                       | Error                 |
+| ------------------------------- | --------------------- |
+| Unknown column                  | `ColumnNotFoundError` |
+| Empty `in` / `notIn` array      | `ValidationError`     |
+| Malformed value for an operator | `ValidationError`     |
+
+## GroupedDataset
+
+```ts
+class GroupedDataset<TResult> {
+  readonly columns: readonly string[];
+  readonly groupCount: number;
+  readonly rowCount: number;
+  readonly sizes: readonly number[];
+  readonly keys: readonly Readonly<Record<string, unknown>>[];
+  aggregate(spec: AggregateSpec): TResult;
+  toDataset(): TResult;
+  mapGroups(
+    fn: (rows: readonly Readonly<Row>[], key: Readonly<Record<string, unknown>>) => readonly Row[],
+  ): TResult;
+}
+```
+
+Created by `dataset.groupBy(...columns)`. `aggregate()` is the only method that computes;
+`keys` and `sizes` describe the split.
+
+Groups keep first-appearance order. Rows with a missing key form their own group with a
+`null` key. Missing cells inside a group are excluded from every aggregation.
+
+`mapGroups()` runs a callback per group and concatenates the rows it returns.
+
+## Aggregations
+
+```ts
+type AggregationOp =
+  | 'count'
+  | 'sum'
+  | 'mean'
+  | 'min'
+  | 'max'
+  | 'median'
+  | 'first'
+  | 'last'
+  | 'nunique'
+  | 'std'
+  | 'variance';
+
+interface AggregationSpec {
+  readonly column?: string;
+  readonly op: AggregationOp;
+  readonly ddof?: number;
+}
+
+interface CustomAggregation {
+  readonly column: string;
+  readonly fn: (values: readonly unknown[], context: AggregationContext) => unknown;
+}
+
+type GroupAggregationFn = (rows: readonly Readonly<Row>[], context: AggregationContext) => unknown;
+
+type AggregationEntry = AggregationSpec | CustomAggregation | GroupAggregationFn;
+type AggregateSpec = Readonly<Record<string, AggregationEntry>>;
+
+interface AggregationContext {
+  readonly column: string | null;
+  readonly rows: readonly Readonly<Row>[];
+}
+```
+
+| `op`                                     | Reads a column? | Notes                                                        |
+| ---------------------------------------- | --------------- | ------------------------------------------------------------ |
+| `count`                                  | Optional        | Without a column counts rows; with one counts present values |
+| `sum`, `mean`, `median`                  | Yes             | Numeric columns only                                         |
+| `min`, `max`, `first`, `last`, `nunique` | Yes             | Any column type                                              |
+| `std`, `variance`                        | Yes             | `ddof` defaults to `1` (sample)                              |
+
+```ts
+data.groupBy('region').aggregate({
+  total: { column: 'revenue', op: 'sum' },
+  spread: { column: 'revenue', op: 'std', ddof: 0 },
+  orders: { op: 'count' },
+  range: { column: 'revenue', fn: (values) => Math.max(...values) - Math.min(...values) },
+  custom: (rows) => rows.length,
+});
+```
+
+`isAggregationOp(value)` narrows an unknown value to `AggregationOp`.
+
+## Aggregate primitives
+
+Standalone functions over an array of values, used internally by the aggregations and
+exported for direct use. They expect the **present** values of one column: Numiq removes
+missing cells before calling them, and a `null` left in the array is coerced by ordinary
+arithmetic (`mean([1, null])` returns `0.5`).
+
+```ts
+function sum(values: readonly number[]): number;
+function mean(values: readonly number[]): number | null;
+function median(values: readonly number[]): number | null;
+function variance(values: readonly number[], options?: DispersionOptions): number | null;
+function std(values: readonly number[], options?: DispersionOptions): number | null;
+function min(values: readonly unknown[]): unknown;
+function max(values: readonly unknown[]): unknown;
+function first(values: readonly unknown[]): unknown;
+function last(values: readonly unknown[]): unknown;
+function nunique(values: readonly unknown[]): number;
+
+interface DispersionOptions {
+  ddof?: number; // default 1
+}
+```
+
+| Function                      | Empty input | Notes                                                                     |
+| ----------------------------- | ----------- | ------------------------------------------------------------------------- |
+| `sum`                         | `0`         | Neumaier-compensated, so `sum([1e16, 1, -1e16])` is `1`; `NaN` propagates |
+| `mean`, `median`              | `null`      | `null` rather than `NaN`                                                  |
+| `variance`, `std`             | `null`      | Sample formula unless `ddof: 0`                                           |
+| `min`, `max`, `first`, `last` | `null`      | Work on any value type                                                    |
+| `nunique`                     | `0`         | Counts distinct present values                                            |
+
+## Next
+
+- [Statistics](/numiq/docs/api/statistics)
+- [Operations](/numiq/docs/api/operations)

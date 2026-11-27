@@ -1,0 +1,267 @@
+---
+title: Metrics and KPI cards
+description: Compute an aggregation, compare it with a baseline, and render it as a KPI card with trends and semantic states.
+related:
+  - /numviz/docs/dashboards
+  - /numviz/docs/api
+---
+
+`createMetric(config)` computes a value immediately and renders the same result as a KPI
+card. Nothing touches the DOM until `render()`.
+
+```ts
+import { createMetric } from '@munachi-me/numviz';
+
+const revenue = createMetric({
+  name: 'Total Revenue',
+  data,
+  column: 'revenue',
+  aggregation: 'sum',
+  format: 'currency',
+  comparison: {
+    data: previousPeriod,
+    column: 'revenue',
+    aggregation: 'sum',
+    label: 'vs previous period',
+  },
+});
+
+revenue.result.value; // computed before rendering
+revenue.result.formattedValue;
+revenue.result.comparison?.percentageChange;
+revenue.result.state; // "positive", "negative" or "neutral"
+
+revenue.render('#revenue');
+```
+
+## Aggregations
+
+| `aggregation`      | Result                                       |
+| ------------------ | -------------------------------------------- |
+| `"sum"`            | Sum of present numeric values                |
+| `"average"`        | Mean of present numeric values               |
+| `"count"`          | Number of rows, regardless of missing values |
+| `"distinct-count"` | Number of distinct present values            |
+| `"minimum"`        | Smallest value                               |
+| `"maximum"`        | Largest value                                |
+| `"median"`         | Median of present numeric values             |
+| `"percentage"`     | Matched rows ÷ all rows, as a fraction       |
+| function           | `(context: MetricContext) => number \| null` |
+
+Accepted aliases, normalized in `result.aggregation`: `avg`, `mean` → `average`; `min` →
+`minimum`; `max` → `maximum`; `distinct`, `distinctCount` → `distinct-count`; `percent` →
+`percentage`.
+
+`count` counts rows even when `column` is supplied. That differs from a column count: a
+column with three rows and one missing value still counts three.
+
+```ts
+const rows = [{ a: 1 }, { a: null }, { b: 2 }];
+
+createMetric({ name: 'Rows', data: rows, column: 'a', aggregation: 'count' }).result.value;
+// 3
+```
+
+### Custom aggregations
+
+```ts
+const range = createMetric({
+  name: 'Range',
+  data: rows,
+  column: 'revenue',
+  aggregation: (context) => {
+    if (context.values.length === 0) return null;
+    return Math.max(...context.values) - Math.min(...context.values);
+  },
+});
+```
+
+```ts
+interface MetricContext {
+  readonly rows: readonly NormalizedRow[];
+  readonly values: readonly number[];
+  readonly column?: string;
+  readonly totalRowCount: number;
+  readonly matchedRowCount: number;
+  readonly dataset: NormalizedDataset;
+}
+```
+
+## Filtering
+
+```ts
+createMetric({
+  name: 'North revenue',
+  data: rows,
+  column: 'revenue',
+  aggregation: 'sum',
+  filter: { region: 'North' },
+});
+```
+
+`filter` is either an object of exact matches or a callback:
+
+```ts
+filter: (row) => Number(row.values.revenue) > 1000;
+```
+
+Missing and invalid values are ignored by numeric aggregations and reported in
+`result.validCount` and `result.missingCount`.
+
+## Percentage
+
+`aggregation: "percentage"` returns the share of filtered rows in the whole dataset as a
+fraction, formatted as a percentage:
+
+```ts
+const share = createMetric({
+  name: 'North share',
+  data: rows,
+  column: 'revenue',
+  aggregation: 'percentage',
+  filter: { region: 'North' },
+});
+
+share.result.value; // 0.5 when half the rows match
+share.result.formattedValue; // "50%"
+```
+
+## Comparisons
+
+```ts
+comparison: {
+  data: previousPeriod,   // or value: 400000
+  column: "revenue",
+  aggregation: "sum",
+  label: "vs previous period",
+}
+```
+
+```ts
+interface MetricComparisonResult {
+  readonly source: 'data' | 'value';
+  readonly value: number | null;
+  readonly formattedValue: string;
+  readonly difference: number | null;
+  readonly formattedDifference: string;
+  readonly percentageChange: number | null;
+  readonly growth: number | null;
+  readonly direction: 'up' | 'down' | 'flat' | null;
+  readonly label: string;
+  readonly rowCount: number;
+  readonly matchedRowCount: number;
+  readonly validCount: number;
+}
+```
+
+- `difference` is `value - baseline`.
+- `percentageChange` is the signed change as a percentage (`33.33` for +33.33%).
+- `growth` is the same change as a fraction (`0.3333`).
+- Division by zero yields `null`, never `Infinity`.
+- `label` defaults to `"vs previous period"`.
+
+## Direction and state
+
+`positiveDirection` decides which direction counts as good. The default is `"up"`.
+
+```ts
+createMetric({
+  name: 'Churn rate',
+  data: rows,
+  column: 'churn',
+  aggregation: 'average',
+  comparison: { value: 0.08 },
+  positiveDirection: 'down',
+});
+```
+
+| Current vs baseline | `positiveDirection: "up"` | `"down"`   |
+| ------------------- | ------------------------- | ---------- |
+| Higher              | `positive`                | `negative` |
+| Lower               | `negative`                | `positive` |
+| Equal               | `neutral`                 | `neutral`  |
+
+`trend` controls the arrow: `"auto"` (follows the comparison), `"up"`, `"down"`, `"flat"` or
+`false` to hide it.
+
+## Formatting
+
+| `format`     | Example                          |
+| ------------ | -------------------------------- |
+| `"number"`   | `1,234.57`                       |
+| `"currency"` | `$1,234.57`                      |
+| `"percent"`  | `123,456.7%` (multiplies by 100) |
+| `"compact"`  | `1.2K`                           |
+| function     | `(value, context) => string`     |
+
+```ts
+createMetric({
+  name: 'Revenue',
+  data: rows,
+  column: 'revenue',
+  aggregation: 'sum',
+  format: 'currency',
+  currency: 'EUR',
+  locale: 'de-DE',
+  formatOptions: { maximumFractionDigits: 0 },
+});
+```
+
+`locale` defaults to `"en-US"` and `currency` to `"USD"`. `formatOptions` is passed to
+`Intl.NumberFormat`.
+
+`prefix` and `suffix` are applied by the card around the formatted value; they are not part
+of `result.formattedValue`.
+
+## Card appearance
+
+| Option         | Values                                                  |
+| -------------- | ------------------------------------------------------- |
+| `title`        | Heading; defaults to `name`                             |
+| `description`  | Supporting line under the value                         |
+| `icon`         | A text glyph, emoji or DOM node                         |
+| `color`        | Accent for the value                                    |
+| `variant`      | `"default"`, `"compact"`, `"bordered"`, `"highlight"`   |
+| `theme`        | `ThemeConfig`                                           |
+| `className`    | Extra class on the card root                            |
+| `emptyMessage` | Shown when the value is `null`; defaults to `"No data"` |
+| `ariaLabel`    | Accessible name; defaults to `name`                     |
+
+## Lifecycle
+
+| Method                | Description                                             |
+| --------------------- | ------------------------------------------------------- |
+| `render(target)`      | Render the card into a selector or element              |
+| `update(config)`      | Re-resolve, recompute and re-render                     |
+| `setData(data)`       | Replace data and recompute                              |
+| `refresh()`           | Recompute against current data                          |
+| `setLoading(loading)` | Show the loading appearance, `aria-busy`                |
+| `setError(message)`   | Show an error with `role="alert"`, or clear with `null` |
+| `destroy()`           | Remove the card and listeners                           |
+
+`result` is recomputed on `update`, `setData` and `refresh`. Reading `result` never renders.
+
+## Accessibility
+
+- The card root is `role="group"` with an accessible label.
+- `aria-busy="true"` while loading.
+- Errors use `role="alert"`.
+- The value is announced through a polite live region.
+- Trend direction is also exposed as text (`↑` / `↓` plus the comparison label), not only
+  as colour.
+
+## Errors
+
+| Situation             | Error code       |
+| --------------------- | ---------------- |
+| Unknown `column`      | `INVALID_CONFIG` |
+| Unknown `aggregation` | `INVALID_CONFIG` |
+
+A filter object that names a field absent from the data is not an error: nothing matches, the
+value is `null` and `matchedRowCount` is `0`.
+
+## Next steps
+
+- [Dashboards](/numviz/docs/dashboards)
+- [Reports and export](/numviz/docs/export)
+- [API reference](/numviz/docs/api)

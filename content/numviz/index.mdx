@@ -1,0 +1,83 @@
+---
+title: Introduction
+description: Numviz is a framework-independent JavaScript library for charts, data tables, KPI metrics and dashboards.
+related:
+  - /numviz/docs/getting-started
+  - /numviz/docs/charts
+  - /numviz/docs/api
+---
+
+Numviz renders charts, HTML data tables, KPI metric cards, dashboards and printable
+reports from ordinary JavaScript data. It needs no React, no CSS framework and no build
+step: the default entry writes plain DOM and SVG into the element you hand it.
+
+It has no runtime dependencies. React support is optional and lives at a separate
+`@munachi-me/numviz/react` subpath.
+
+## What Numviz does
+
+<Cards>
+  <Card title="Charts" href="/numviz/docs/charts">
+    Eleven SVG chart types — bar, grouped bar, stacked bar, horizontal bar, line, area, scatter,
+    histogram, radar, pie and doughnut — with legends, tooltips, labels and axes.
+  </Card>
+  <Card title="Tables" href="/numviz/docs/tables">
+    Accessible HTML tables with sorting, search, pagination, selection, formatting, conditional
+    rendering and CSV/JSON/HTML export.
+  </Card>
+  <Card title="Metrics" href="/numviz/docs/metrics">
+    KPI cards that compute an aggregation, compare it against a baseline and format the result with
+    trends and semantic states.
+  </Card>
+  <Card title="Dashboards" href="/numviz/docs/dashboards">
+    A responsive grid of widgets with filters, cross-filtering, state snapshots and standalone
+    static export from Node.js.
+  </Card>
+</Cards>
+
+## Why Numviz
+
+**Framework-independent.** Every engine is a factory returning an instance with
+`render`, `update` and `destroy`. Nothing imports React, so it works in a plain HTML page,
+in an iframe, or inside any framework.
+
+**Data in, DOM out.** Data can be an array of records, an array of arrays with column
+definitions, or a `{ columns, rows }` dataset shape. Numviz normalizes values once and
+never mutates your input.
+
+**Text is text.** String values and custom renderer strings are inserted as text, never
+parsed as HTML. Return a DOM node from a renderer when you need markup.
+
+**Optional React.** The React components wrap the same instances, so behaviour and
+styling cannot drift between the imperative and declarative APIs.
+
+## Core concepts
+
+| Concept                   | What it is                                                              |
+| ------------------------- | ----------------------------------------------------------------------- |
+| `createChart(config)`     | An SVG chart instance: `render`, `update`, `toSVG`, `toPNG`, `destroy`. |
+| `createTable(config)`     | An HTML table instance with sorting, search, pagination and export.     |
+| `createMetric(config)`    | A KPI card instance that also exposes the computed `result`.            |
+| `createDashboard(config)` | A grid of widgets — charts, tables, metrics and content blocks.         |
+| `createReport(config)`    | A dashboard with a report preset, metadata and print defaults.          |
+| `NumvizError`             | Every error carries a stable `code` and an optional `path`.             |
+
+## Supported environments
+
+- Any environment with a DOM: browsers, iframes, jsdom, and the DOM in a Node test runner.
+- Node.js 18 or later for the package itself and for `dashboard.export()`, which writes
+  files and therefore runs only on the server.
+- React 18 or later when you use the optional `@munachi-me/numviz/react` entry.
+
+## Version note
+
+This site documents `@munachi-me/numviz` **1.0.2**, the current release on npm. 1.0.2 changes
+only how the package is published (npm Trusted Publishing); the chart, table, metric,
+dashboard, report and React APIs are unchanged from 1.0.1, which added CSV formula-injection
+protection to table export.
+
+## Where to go next
+
+- [Getting started](/numviz/docs/getting-started) — render a chart, a table and a KPI card.
+- [Charts](/numviz/docs/charts) — every chart type and option.
+- [API reference](/numviz/docs/api) — exports, configuration types and lifecycle methods.

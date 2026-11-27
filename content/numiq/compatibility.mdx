@@ -1,0 +1,220 @@
+---
+title: Compatibility and troubleshooting
+description: Runtime support, module formats, filesystem rules, common errors and how to fix them.
+related:
+  - /numiq/docs/installation
+  - /numiq/docs/data-loading
+---
+
+## Runtime support
+
+| Environment                           | Default entry       | Local files | URLs | Blobs and bytes |
+| ------------------------------------- | ------------------- | ----------- | ---- | --------------- |
+| Node.js 18+ (ESM)                     | `dist/esm/node.js`  | Yes         | Yes  | Yes             |
+| Node.js 18+ (CommonJS)                | `dist/cjs/node.js`  | Yes         | Yes  | Yes             |
+| Browser via bundler                   | `dist/esm/index.js` | No          | Yes  | Yes             |
+| Browser with `@munachi-me/numiq/core` | `dist/esm/index.js` | No          | Yes  | Yes             |
+
+The browser-safe entry imports no Node.js built-ins, so no polyfills are needed. The package
+declares `node >= 18` and has no runtime dependencies.
+
+## Module formats
+
+```ts
+// ESM
+import { createDataset } from '@munachi-me/numiq';
+
+// CommonJS
+const { createDataset } = require('@munachi-me/numiq');
+```
+
+Type declarations are published for both formats. `@munachi-me/numiq/core` resolves to the
+browser-safe build in both conditions, which is useful when a shared module is imported by a
+server bundle and a client bundle.
+
+## Local file rules
+
+Local files are read from `dataset/` under `process.cwd()`.
+
+| Path                                       | Result                                              |
+| ------------------------------------------ | --------------------------------------------------- |
+| `"sales.csv"`                              | Read from `dataset/sales.csv`                       |
+| `"./dataset/sales.csv"`                    | `ValidationError` — separators are not allowed      |
+| `"sub/sales.csv"`                          | `ValidationError` — separators are not allowed      |
+| `"/abs/sales.csv"`                         | `ValidationError` — absolute paths are not allowed  |
+| `"../sales.csv"`                           | `ValidationError` — parent traversal is not allowed |
+| Symlink inside `dataset/` pointing outside | Refused after `realpath`                            |
+
+Run the process from the project root, or pass `{ datasetDir }`:
+
+```ts
+await loadCSV('sales.csv', { datasetDir: '/srv/app' });
+```
+
+## Common errors
+
+### `EnvironmentError`: local file paths require the Node.js build
+
+You called a loader with a filename from a browser bundle. Pass a `File`, `Blob`, byte
+buffer or URL instead, or move the load to the server and send the rows to the client.
+
+```ts
+// In the browser
+const data = await loadCSV(fileInput.files[0]);
+```
+
+### `ImportError`: no dataset folder found
+
+The message names the resolved path. Create `dataset/` in the working directory, pass
+`datasetDir`, or use an absolute URL.
+
+### `FormatError`: could not determine the data format
+
+`loadURL` needs `format`, a `.csv` / `.tsv` / `.json` path extension, or a recognised
+`content-type`. Pass `{ format: "csv" }` when the URL gives none of them.
+
+### `FormatError`: source declares another format
+
+`loadCSV` received a `File` named `*.json`, or `loadJSON` received a `*.csv` name. Call the
+loader that matches the name, or rename the file.
+
+### `ColumnNotFoundError`
+
+The column name is misspelled, or an earlier `select` / `drop` / `rename` removed it. The
+error carries `available`, so a caller can suggest a correction:
+
+```ts
+import { ColumnNotFoundError } from '@munachi-me/numiq';
+
+try {
+  data.column('revenues');
+} catch (error) {
+  if (error instanceof ColumnNotFoundError) {
+    console.log(`Did you mean: ${error.available.join(', ')}`);
+  }
+}
+```
+
+### `ValidationError`: validation failed
+
+`validateOrThrow()` throws with the issue count and the first issue. Use `validate()` when
+you want every issue:
+
+```ts
+const report = data.validate(schema);
+report.issues.forEach((issue) => console.log(issue.column, issue.row, issue.code));
+```
+
+### Numbers arrive as strings
+
+Integers beyond `Number.MAX_SAFE_INTEGER`, values with leading zeros and values beginning
+with `+` are kept as strings on purpose. So are `NA` / `N/A` / `null` unless you opt in:
+
+```ts
+await loadCSV('data.csv', { normalization: { nullValues: ['', 'NA', 'N/A', 'null'] } });
+```
+
+If a numeric column arrives as text, check `importReport.warnings` for `unsafe-integer`, then
+cast explicitly with `cast({ column: "number" })` — and read the error if it throws.
+
+### A date column is text
+
+Numiq never turns date-like text into `Date` objects without being asked. Declare the type:
+
+```ts
+await loadCSV('orders.csv', { schema: { ordered_on: 'date' } });
+```
+
+Casting is strict and requires ISO input; `03/04/2026` is ambiguous and is rejected rather
+than guessed.
+
+### `mean` of a text column throws
+
+`fillMissing("mean")` and `"median"` require numeric columns. Use a per-column mapping, or
+select the numeric columns first.
+
+### A correlation is `null`
+
+`r: null` with `reason: "insufficient-data"` means fewer than two complete pairs;
+`reason: "zero-variance"` means one column never varies. Neither is a bug.
+
+### A pipeline step failed
+
+`run()` returns `ok: false` with `failedStep` and `failedIndex`. Pass
+`{ throwOnError: true }` to get a `PipelineError` with the original error attached.
+
+### Windows in the browser
+
+The browser build has no `node:fs`, so `loadCSV("file.csv")` throws. Everything else —
+parsing, datasets, statistics, pipelines over in-memory data — works unchanged.
+
+## Known limitations
+
+- **No SQL parser.** `Query.toString()` renders a condition tree; nothing parses it back.
+- **No lazy evaluation.** Every transformation copies the rows it produces. A chain of _k_
+  steps touches the data _k_ times.
+- **`data` is a deep copy.** Reading it inside a loop over 100,000 rows is measurably slow;
+  read it once.
+- **`parseDelimited` needs the whole text.** Use `chunkDelimited` to bound peak memory.
+- **JSON is not flattened.** Nested objects stay as objects and are typed `mixed`.
+- **Import `format` hints are inert.** `ColumnTypeSpec.format` is accepted and ignored.
+- **Regression is OLS only.** No regularisation, no robust regression, no categorical
+  encoding.
+- **Insights are descriptive.** No p-values, no causal claims, no identifier rankings.
+
+## Patch releases after 2.0.0
+
+`2.0.1` is a corrective release with no public API change. It fixes `chunkDelimited()` so
+records are pulled from the tokenizer one at a time instead of tokenizing the whole input
+before the first chunk, which lowers peak memory during a fold and defers a malformed-record
+error until iteration reaches it. It also tightens `isInterchangePayload()` validation, which
+now checks the whole payload contract rather than four fields. Valid programs behave the same.
+
+## Migrating to 2.0.0
+
+`2.0.0` is a consolidation release with one breaking change and two deprecations. Every
+other 1.4.x call keeps its signature, return type and result.
+
+### Breaking: `unique()` returns values, not a count
+
+```ts
+data.unique('region'); // ["north", "south", "east"], not 3
+data.uniqueCount('region'); // 3
+```
+
+`unique()` now matches `distinct()`. Both exclude missing values and throw
+`ColumnNotFoundError` for an unknown column. The old behaviour returned a number where the
+pandas idiom expects an array, so `npx tsc --noEmit` finds every affected call site: any
+assignment to a `number`, comparison with `>`, `===`, or a numeric matcher is now an error.
+Rename those calls to `uniqueCount()`.
+
+### Deprecated, still working until 3.0.0
+
+| Deprecated           | Use instead       |
+| -------------------- | ----------------- |
+| `getQualityReport()` | `qualityReport()` |
+| `toTable()`          | `table()`         |
+
+Both aliases are identical to their replacements; only the names are unclear.
+
+### What did not change
+
+`Dataset` construction and the `columns` / `name` / `metadata` options, every transform,
+every statistic, data spaces, chunked reading, interchange, the error taxonomy, the import
+report and the normalization policy. `rowCount`, `columnCount`, `length` and `shape` keep
+their names and meanings.
+
+## Upgrading
+
+```bash
+npm install @munachi-me/numiq@2
+```
+
+1. Run `npx tsc --noEmit` and rename any `unique()` call that expected a number.
+2. Optionally replace the two deprecated names.
+3. Run your tests. Nothing else should move.
+
+## Next
+
+- [API overview](/numiq/docs/api)
+- [Numviz documentation](/numviz/docs)

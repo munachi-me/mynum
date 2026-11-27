@@ -1,0 +1,351 @@
+---
+title: Examples
+description: Complete, runnable examples for charts, tables, KPI cards, dashboards, filters, React and standalone export.
+related:
+  - /numviz/docs/charts
+  - /numviz/docs/dashboards
+  - /numviz/docs/react
+---
+
+Every example uses only exported Numviz APIs. Data is illustrative; the configuration is the
+part to copy.
+
+## A page with all four engines
+
+```html title="index.html"
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Numviz example</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 32px;
+      }
+      #dashboard {
+        margin-top: 32px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="chart"></div>
+    <div id="table"></div>
+    <div id="metric"></div>
+    <div id="dashboard"></div>
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>
+```
+
+```js title="main.js"
+import { createChart, createTable, createMetric, createDashboard } from '@munachi-me/numviz';
+
+const monthly = [
+  { month: 'Jan', revenue: 32000, expenses: 21000 },
+  { month: 'Feb', revenue: 41000, expenses: 24000 },
+  { month: 'Mar', revenue: 38500, expenses: 22500 },
+];
+
+createChart({
+  type: 'grouped-bar',
+  data: monthly,
+  x: 'month',
+  y: 'revenue',
+  series: [
+    { field: 'revenue', label: 'Revenue' },
+    { field: 'expenses', label: 'Expenses' },
+  ],
+  legend: { position: 'top' },
+  title: 'Revenue and expenses',
+}).render('#chart');
+
+createTable({
+  data: monthly,
+  columns: [
+    { field: 'month', label: 'Month' },
+    { field: 'revenue', format: 'currency', currency: 'USD' },
+    { field: 'expenses', format: 'currency', currency: 'USD' },
+  ],
+  pagination: true,
+  pageSize: 10,
+}).render('#table');
+
+createMetric({
+  name: 'Revenue',
+  data: monthly,
+  column: 'revenue',
+  aggregation: 'sum',
+  format: 'currency',
+}).render('#metric');
+
+createDashboard({
+  title: 'Overview',
+  components: [
+    {
+      id: 'revenue',
+      type: 'metric',
+      name: 'Revenue',
+      data: monthly,
+      column: 'revenue',
+      aggregation: 'sum',
+      format: 'currency',
+    },
+    { id: 'chart', type: 'chart', chartType: 'line', data: monthly, x: 'month', y: 'revenue' },
+    { id: 'table', type: 'table', data: monthly, columns: ['month', 'revenue'] },
+  ],
+}).render('#dashboard');
+```
+
+## Each chart type
+
+```ts
+const data = [
+  { category: 'A', value: 30, other: 12 },
+  { category: 'B', value: 55, other: 20 },
+  { category: 'C', value: 41, other: 18 },
+];
+
+const types = [
+  'bar',
+  'grouped-bar',
+  'stacked-bar',
+  'horizontal-bar',
+  'line',
+  'area',
+  'scatter',
+  'radar',
+  'pie',
+  'doughnut',
+] as const;
+
+for (const type of types) {
+  createChart({
+    type,
+    data,
+    x: 'category',
+    y: 'value',
+    series: [
+      { field: 'value', label: 'Value' },
+      { field: 'other', label: 'Other' },
+    ],
+  }).render(`#${type}`);
+}
+
+createChart({
+  type: 'histogram',
+  data: Array.from({ length: 200 }, (_, i) => ({ score: (i * 37) % 100 })),
+  y: 'score',
+  bins: 10,
+}).render('#histogram');
+```
+
+`pie`, `doughnut` and `horizontal-bar` read a single value field, so drop `series` for those
+if you want one series.
+
+## Conditional table cells
+
+```ts
+createTable({
+  data: [
+    { name: 'Ada', score: 94 },
+    { name: 'Grace', score: 58 },
+  ],
+  columns: [
+    { field: 'name', label: 'Name' },
+    {
+      field: 'score',
+      label: 'Score',
+      format: (value, row) => (Number(row.score) < 60 ? `${value} (fail)` : String(value)),
+    },
+    {
+      label: 'Band',
+      field: 'band',
+      value: (row) => (Number(row.score) >= 60 ? 'Pass' : 'Fail'),
+      render: (row) => (Number(row.score) >= 60 ? 'Pass' : 'Fail'),
+    },
+  ],
+}).render('#table');
+```
+
+## KPI with a comparison
+
+```ts
+const current = [{ revenue: 482000 }];
+const previous = [{ revenue: 428000 }];
+
+const metric = createMetric({
+  name: 'Total revenue',
+  data: current,
+  column: 'revenue',
+  aggregation: 'sum',
+  format: 'currency',
+  comparison: {
+    data: previous,
+    column: 'revenue',
+    aggregation: 'sum',
+    label: 'vs last month',
+  },
+});
+
+metric.result.comparison?.percentageChange; // 12.6…
+metric.result.state; // "positive"
+metric.render('#revenue');
+```
+
+## Dashboard with a filter and cross-filtering
+
+```ts
+createDashboard({
+  title: 'Accounts',
+  filters: [{ id: 'region', type: 'select', field: 'region', label: 'Region' }],
+  components: [
+    {
+      id: 'total',
+      type: 'metric',
+      name: 'Revenue',
+      data: rows,
+      column: 'revenue',
+      aggregation: 'sum',
+      format: 'currency',
+    },
+    {
+      id: 'chart',
+      type: 'chart',
+      chartType: 'bar',
+      data: rows,
+      x: 'region',
+      y: 'revenue',
+      crossFilter: { field: 'region' },
+    },
+    {
+      id: 'records',
+      type: 'table',
+      data: rows,
+      columns: ['region', 'account', 'revenue'],
+      crossFilter: { field: 'region' },
+    },
+  ],
+}).render('#dashboard');
+```
+
+Clicking a bar filters the metric and the table. `dashboard.getState()` returns the filter
+under `crossfilter:chart`.
+
+## React
+
+```tsx
+'use client';
+
+import { Dashboard, DashboardWidget } from '@munachi-me/numviz/react';
+
+export function Overview({ rows }: { rows: Record<string, unknown>[] }) {
+  return (
+    <Dashboard title="Overview" layout={{ columns: { base: 1, md: 2 } }}>
+      <DashboardWidget
+        id="revenue"
+        type="metric"
+        name="Revenue"
+        data={rows}
+        column="revenue"
+        aggregation="sum"
+        format="currency"
+      />
+      <DashboardWidget id="chart" type="chart" chartType="bar" data={rows} x="region" y="revenue" />
+    </Dashboard>
+  );
+}
+```
+
+## Next.js App Router
+
+```tsx title="app/dashboard/page.tsx"
+import { readFile } from 'node:fs/promises';
+import { DashboardClient } from './dashboard-client';
+
+export default async function Page() {
+  const rows = JSON.parse(await readFile('data/rows.json', 'utf8'));
+  return <DashboardClient rows={rows} />;
+}
+```
+
+```tsx title="app/dashboard/dashboard-client.tsx"
+'use client';
+
+import { Dashboard } from '@munachi-me/numviz/react';
+
+export function DashboardClient({ rows }: { rows: Record<string, unknown>[] }) {
+  return (
+    <Dashboard
+      title="Sales"
+      components={[
+        {
+          id: 'revenue',
+          type: 'metric',
+          name: 'Revenue',
+          data: rows,
+          column: 'revenue',
+          aggregation: 'sum',
+        },
+        { id: 'chart', type: 'chart', chartType: 'bar', data: rows, x: 'region', y: 'revenue' },
+      ]}
+    />
+  );
+}
+```
+
+The data is read on the server and passed as plain records; the engine mounts in the browser.
+
+## Export a standalone dashboard
+
+```ts title="export-dashboard.ts"
+import { createDashboard } from '@munachi-me/numviz';
+
+const dashboard = createDashboard({
+  title: 'Monthly report',
+  components: [
+    {
+      id: 'revenue',
+      type: 'metric',
+      name: 'Revenue',
+      data: rows,
+      column: 'revenue',
+      aggregation: 'sum',
+      format: 'currency',
+    },
+    { id: 'chart', type: 'chart', chartType: 'bar', data: rows, x: 'month', y: 'revenue' },
+  ],
+});
+
+const result = await dashboard.export({ format: 'html', output: './report', data: 'embedded' });
+console.log(
+  result.output,
+  result.files.map((file) => file.path),
+);
+```
+
+```bash
+npx tsx export-dashboard.ts
+```
+
+Run this with Node.js. In a browser, `export()` rejects with `EXPORT_FAILED`.
+
+## Charts and tables together with Numiq
+
+Numviz accepts the public dataset shape, so a Numiq dataset can be passed directly. The two
+packages stay independent; neither requires the other.
+
+```ts
+import { useSampleDataset } from '@munachi-me/numiq';
+import { createChart } from '@munachi-me/numviz';
+
+const data = await useSampleDataset();
+const byRegion = data.groupBy('region').aggregate({ revenue: { column: 'revenue', op: 'sum' } });
+
+createChart({ type: 'bar', data: byRegion, x: 'region', y: 'revenue' }).render('#chart');
+```
+
+## Next steps
+
+- [Troubleshooting](/numviz/docs/troubleshooting)
+- [API reference](/numviz/docs/api)

@@ -1,0 +1,296 @@
+---
+title: Dataset reference
+description: createDataset and every property and method on the Dataset class.
+related:
+  - /numiq/docs/datasets
+  - /numiq/docs/api/statistics
+---
+
+## createDataset
+
+```ts
+function createDataset(
+  input: readonly Row[] | Readonly<Record<string, readonly unknown[]>> | Dataset,
+  options?: DatasetOptions,
+): Dataset;
+```
+
+Builds a dataset from records, column-oriented data, or another dataset. Raw cells go
+through the normalization policy unless `normalization.inferTypes` is `false`.
+
+```ts
+createDataset([{ name: 'Ada', age: 36 }]);
+createDataset({ name: ['Ada', 'Lin'], age: [36, 41] });
+createDataset([{ a: 1, b: 2 }], { columns: ['b', 'a'], name: 'demo' });
+```
+
+| Option          | Default               | Meaning                                          |
+| --------------- | --------------------- | ------------------------------------------------ |
+| `columns`       | union of record keys  | Column order; required for column-oriented input |
+| `name`          | `"Dataset"`           | Dataset name                                     |
+| `metadata`      | `{}`                  | Read-only metadata                               |
+| `normalization` | import default policy | Cell policy for raw input                        |
+
+`new Dataset(rows, options)` builds the same object. `createNormalizedDataset(...)` is an
+internal constructor for parsers and is not part of the public API surface.
+
+## Properties
+
+| Member         | Type                                |
+| -------------- | ----------------------------------- |
+| `columns`      | `readonly string[]`                 |
+| `shape`        | `readonly [number, number]`         |
+| `data`         | `readonly Row[]` (a copy)           |
+| `rowCount`     | `number`                            |
+| `columnCount`  | `number`                            |
+| `length`       | `number` (alias of `rowCount`)      |
+| `empty`        | `boolean`                           |
+| `dtypes`       | `Record<string, DType>`             |
+| `schema`       | `Record<string, ColumnSchema>`      |
+| `name`         | `string`                            |
+| `metadata`     | `Readonly<Record<string, unknown>>` |
+| `importReport` | `ImportReport \| null`              |
+
+Every property is read-only. `data` returns a deep copy; mutating it cannot change the
+dataset.
+
+## Inspection
+
+| Method              | Returns                                                 |
+| ------------------- | ------------------------------------------------------- |
+| `head(count = 5)`   | `Dataset`                                               |
+| `tail(count = 5)`   | `Dataset`                                               |
+| `info()`            | `DatasetInfo`                                           |
+| `column(name)`      | `ColumnView`                                            |
+| `distinct(name)`    | `unknown[]` — distinct present values, first-seen order |
+| `unique(name)`      | `unknown[]` — alias of `distinct`                       |
+| `uniqueCount(name)` | `number`                                                |
+
+`column()` throws `ColumnNotFoundError` for an unknown name.
+
+```ts
+data.info();
+// { name, rowCount, columnCount, shape, dtypes, missingValues, memoryHint }
+
+data.column('region');
+// { name: "region", type: "string", values: [...], missing: 0, unique: 4 }
+```
+
+## Table output
+
+| Method                            | Returns                                    |
+| --------------------------------- | ------------------------------------------ |
+| `table(options?: TableOptions)`   | `string`                                   |
+| `toTable(options?: TableOptions)` | `string` — deprecated alias of `table`     |
+| `display(options?: TableOptions)` | `this` — prints, then returns the dataset  |
+| `toJSON()`                        | `{ name, columns, shape, rows, metadata }` |
+
+`TableOptions` is documented in the [API overview](/numiq/docs/api#dataset-options-and-views).
+
+## Selection
+
+| Method   | Signature                                                 | Returns   |
+| -------- | --------------------------------------------------------- | --------- |
+| `filter` | `filter(predicate: (row: Row, index: number) => boolean)` | `Dataset` |
+| `sort`   | `sort(column: string, direction: SortDirection = "asc")`  | `Dataset` |
+| `select` | `select(columns: readonly string[])`                      | `Dataset` |
+| `limit`  | `limit(count: number)`                                    | `Dataset` |
+
+`SortDirection` is `"asc" | "desc"`. Missing values sort last in both directions; numbers
+and dates compare numerically; everything else compares as text; ties keep input order.
+
+## Preparation
+
+| Method                       | Signature                                                                                                   |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `drop`                       | `drop(columns: string \| readonly string[])`                                                                |
+| `rename`                     | `rename(mapping: Readonly<Record<string, string>>)`                                                         |
+| `dropMissing`                | `dropMissing(options?: DropMissingOptions)`                                                                 |
+| `fillMissing`                | `fillMissing(strategyOrMapping: FillStrategy \| Readonly<Record<string, FillStrategy>>)`                    |
+| `replace`                    | `replace(rules: Readonly<Record<string, ReplaceRule \| readonly ReplaceRule[]>>)`                           |
+| `map`                        | `map(column: string, callback: (value, row, index) => unknown)`                                             |
+| `addColumn`                  | `addColumn(name: string, spec: ((row, index) => unknown) \| readonly unknown[])`                            |
+| `addConditionalColumn`       | `addConditionalColumn(name: string, rules: readonly ConditionalRule[], options?: ConditionalColumnOptions)` |
+| `addConditionalColumnReport` | same, returns `{ dataset, report }`                                                                         |
+| `cast`                       | `cast(schema: Readonly<Record<string, ColumnType \| ColumnTypeSpec>>)`                                      |
+| `dropDuplicates`             | `dropDuplicates(columns?: string \| readonly string[])`                                                     |
+| `sample`                     | `sample(count: number, options?: SampleOptions)`                                                            |
+| `normalizeText`              | `normalizeText(options?: NormalizeTextOptions)`                                                             |
+
+### Option types
+
+```ts
+interface DropMissingOptions {
+  columns?: readonly string[];
+  how?: 'any' | 'all'; // default "any"
+}
+
+type FillStrategy = 'mean' | 'median' | 'mode' | FillValue | ((row: Row, index: number) => unknown);
+type FillValue = string | number | boolean | Date | null;
+
+type ReplaceRule =
+  | { from: unknown; to: unknown }
+  | { from: readonly unknown[]; to: unknown }
+  | { match: (value: unknown, context: ReplaceContext) => boolean; to: unknown }
+  | ((value: unknown, context: ReplaceContext) => unknown);
+
+interface SampleOptions {
+  seed?: number;
+  replace?: boolean; // default false
+}
+
+interface NormalizeTextOptions {
+  whitespace?: 'trim' | 'collapse' | 'none'; // default "trim"
+  case?: 'lower' | 'upper' | 'title';
+  extraWhitespace?: readonly string[];
+}
+```
+
+`ReplaceContext` is `{ row, column, index }`.
+
+### Conditional columns
+
+```ts
+interface ConditionalRule {
+  readonly when: (row: Readonly<Row>, index: number, context: ConditionalRuleContext) => boolean;
+  readonly then: ConditionalThen;
+}
+
+interface ConditionalColumnOptions {
+  readonly else?: ConditionalThen | ((row: Readonly<Row>, index: number) => unknown);
+}
+```
+
+`ConditionalThen` is a static value or a callback. `else` defaults to `null`. The value is
+cloned per row, so a shared object or `Date` is never aliased.
+
+`addConditionalColumnReport` returns:
+
+```ts
+interface ConditionalColumnReport {
+  readonly column: string;
+  readonly rowCount: number;
+  readonly matched: readonly number[]; // one count per rule
+  readonly unmatched: number;
+}
+```
+
+### Text normalization result
+
+```ts
+const { dataset, changes, changedRows } = data.normalizeText({ case: 'lower' });
+
+interface CleaningChange {
+  readonly column: string;
+  readonly changed: number;
+  readonly examined: number;
+  readonly examples: readonly { row: number; before: unknown; after: unknown }[];
+}
+```
+
+Non-string cells are left untouched. At most five examples are recorded per column.
+
+## Query and grouping
+
+| Method    | Signature                                              | Returns                   |
+| --------- | ------------------------------------------------------ | ------------------------- |
+| `query`   | `query()`                                              | `Query<Dataset>`          |
+| `groupBy` | `groupBy(...columns: (string \| readonly string[])[])` | `GroupedDataset<Dataset>` |
+
+See [Query and aggregation](/numiq/docs/api/query).
+
+## Joins and reshaping
+
+| Method        | Signature                                                                | Returns                           |
+| ------------- | ------------------------------------------------------------------------ | --------------------------------- |
+| `join`        | `join(other: Dataset, options: JoinOptions)`                             | `Dataset`                         |
+| `joinReport`  | `joinReport(other: Dataset, options: JoinOptions)`                       | `{ dataset, report }`             |
+| `pivot`       | `pivot(options: PivotOptions)`                                           | `Dataset`                         |
+| `pivotReport` | `pivotReport(options: PivotOptions)`                                     | `{ dataset, pivoted, collapsed }` |
+| `melt`        | `melt(options?: MeltOptions)`                                            | `Dataset`                         |
+| `concat`      | `concat(others: Dataset \| readonly Dataset[], options?: ConcatOptions)` | `Dataset`                         |
+
+Option types are documented in [Operations](/numiq/docs/api/operations).
+
+## Window functions
+
+| Method        | Signature                                            |
+| ------------- | ---------------------------------------------------- |
+| `window`      | `window(name, options: WindowColumnOptions)`         |
+| `rowNumber`   | `rowNumber(name, options: WindowOptions)`            |
+| `rank`        | `rank(name, options: WindowOptions)`                 |
+| `denseRank`   | `denseRank(name, options: WindowOptions)`            |
+| `rankRows`    | `rankRows(options: WindowOptions): RankedRow[]`      |
+| `lag`         | `lag(name, column, options: OffsetOptions)`          |
+| `lead`        | `lead(name, column, options: OffsetOptions)`         |
+| `cumSum`      | `cumSum(name, column, options: CumulativeOptions)`   |
+| `cumMean`     | `cumMean(name, column, options: CumulativeOptions)`  |
+| `rollingSum`  | `rollingSum(name, column, options: RollingOptions)`  |
+| `rollingMean` | `rollingMean(name, column, options: RollingOptions)` |
+| `rollingMin`  | `rollingMin(name, column, options: RollingOptions)`  |
+| `rollingMax`  | `rollingMax(name, column, options: RollingOptions)`  |
+| `rollingStd`  | `rollingStd(name, column, options: RollingOptions)`  |
+
+`WindowOptions` requires `orderBy`. Naming an existing column throws `ValidationError`.
+
+## Time series
+
+| Method           | Signature                                                                  |
+| ---------------- | -------------------------------------------------------------------------- |
+| `sortByTime`     | `sortByTime(timeColumn, options?: SortByTimeOptions)`                      |
+| `extractPeriod`  | `extractPeriod(name, timeColumn, interval: TimeInterval)`                  |
+| `resample`       | `resample(options: ResampleOptions)`                                       |
+| `resampleReport` | `resampleReport(options: ResampleOptions): { dataset, bucketed, dropped }` |
+| `periodBuckets`  | `periodBuckets(timeColumn, interval): string[]`                            |
+
+## Validation
+
+| Method            | Signature                                                       | Returns            |
+| ----------------- | --------------------------------------------------------------- | ------------------ |
+| `validate`        | `validate(schema: ValidationSchema, options?: ValidateOptions)` | `ValidationReport` |
+| `validateOrThrow` | `validateOrThrow(schema, options?)`                             | `Dataset`          |
+
+`validateOrThrow` throws `ValidationError` when the report is invalid.
+
+## Analysis
+
+| Method                   | Signature                                                                        |
+| ------------------------ | -------------------------------------------------------------------------------- |
+| `describe`               | `describe()` / `describe(options)` / `describe(column, options?)`                |
+| `profile`                | `profile()` / `profile(options)` / `profile(column)` / `profile(columns)`        |
+| `covariance`             | `covariance(left, right, options?: AdvancedOptions): number \| null`             |
+| `correlation`            | `correlation(left, right): CorrelationResult`                                    |
+| `rankCorrelation`        | `rankCorrelation(left, right): CorrelationResult`                                |
+| `correlationMatrix`      | `correlationMatrix(columns?, method?: "pearson" \| "spearman")`                  |
+| `zScores`                | `zScores(column, options?: AdvancedOptions): ZScoreResult`                       |
+| `percentileRank`         | `percentileRank(column, value): number \| null`                                  |
+| `skewness` / `kurtosis`  | `(column): number \| null`                                                       |
+| `fiveNumberSummary`      | `(column): FiveNumberSummary`                                                    |
+| `outliers`               | `(column, options?: OutlierOptions): OutlierResult`                              |
+| `withZScores`            | `withZScores(column, name?, options?): Dataset`                                  |
+| `regression`             | `regression(options: RegressionOptions): RegressionModel`                        |
+| `tTest`                  | `tTest(column, options?: OneSampleTTestOptions)`                                 |
+| `tTestBetween`           | `tTestBetween(column, groupColumn, groups?, options?)`                           |
+| `pairedTTest`            | `pairedTTest(before, after, options?: TestOptions)`                              |
+| `chiSquare`              | `chiSquare(column, otherColumn, options?: TestOptions)`                          |
+| `anova`                  | `anova(column, groupColumn, options?: TestOptions)`                              |
+| `normalityTest`          | `normalityTest(column, options?: TestOptions)`                                   |
+| `meanConfidenceInterval` | `meanConfidenceInterval(column, confidence?): { lower, upper, mean, level, df }` |
+| `missingValues`          | `missingValues(options?: MissingValuesOptions)`                                  |
+| `findDuplicates`         | `findDuplicates(options?: FindDuplicatesOptions)`                                |
+| `detectOutliers`         | `detectOutliers(options?: DetectOutliersOptions)`                                |
+| `qualityReport`          | `qualityReport(): QualityReport`                                                 |
+| `getQualityReport`       | `getQualityReport(): QualityReport` (alias)                                      |
+| `createMetric`           | `createMetric(spec: MetricSpec): Metric`                                         |
+| `insights`               | `insights(options?: InsightOptions): InsightReport`                              |
+| `stratifiedSample`       | `stratifiedSample(size, strata, options?: SampleOptions)`                        |
+| `systematicSample`       | `systematicSample(interval, options?: SampleOptions)`                            |
+| `percentChange`          | `percentChange(column, name?): Dataset`                                          |
+| `cohort`                 | `cohort(options: CohortOptions): Dataset`                                        |
+
+Result shapes are documented in [Statistics](/numiq/docs/api/statistics).
+
+## Next
+
+- [Query and aggregation](/numiq/docs/api/query)
+- [Statistics](/numiq/docs/api/statistics)

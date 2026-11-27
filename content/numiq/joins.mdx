@@ -1,0 +1,291 @@
+---
+title: Joins and reshaping
+description: Join related datasets, pivot between wide and long layouts, stack rows, and model relationships once with a DataSpace.
+related:
+  - /numiq/docs/datasets
+  - /numiq/docs/window-functions
+  - /numiq/docs/api/operations
+---
+
+## Joins
+
+`join()` brings columns from a related dataset. Both sources are left untouched.
+
+```ts
+const result = orders.join(customers, { on: 'customer_id', how: 'left' });
+```
+
+| Option               | Default               | Meaning                                           |
+| -------------------- | --------------------- | ------------------------------------------------- |
+| `on`                 | —                     | Key column(s) with the same name on both sides    |
+| `leftOn` / `rightOn` | —                     | Explicit key mapping for differently named keys   |
+| `how`                | `"inner"`             | `"inner"`, `"left"`, `"right"` or `"full"`        |
+| `suffixes`           | `["_left", "_right"]` | Suffixes for colliding non-key columns            |
+| `nullsMatch`         | `false`               | Whether a `null` key can match another `null` key |
+| `maxRows`            | `1_000_000`           | Guard against a runaway many-to-many product      |
+
+```ts
+const orders = createDataset([
+  { id: 1, cust: 'c1', total: 100 },
+  { id: 2, cust: 'c2', total: 200 },
+  { id: 3, cust: 'c9', total: 50 },
+]);
+
+const customers = createDataset([
+  { key: 'c1', region: 'north', total: 1 },
+  { key: 'c2', region: 'south', total: 2 },
+]);
+
+orders.join(customers, { leftOn: 'cust', rightOn: 'key', how: 'left' }).columns;
+// ["id", "cust", "total_left", "key", "region", "total_right"]
+```
+
+### Key rules
+
+- Keys match by value and type, so `1` never matches `"1"`.
+- A `null` key matches nothing by default — the SQL reading of an unknown key — unless
+  `nullsMatch: true` is set.
+- A right key column is dropped when it duplicates its left partner, since the values are
+  equal by definition; when the left side is absent, the key is sourced from the right row.
+- Only colliding **non-key** columns are suffixed, on both sides, so neither side silently
+  wins.
+- A many-to-many join multiplies rows, so `maxRows` turns a runaway product into an error
+  naming the cause.
+
+### Join report
+
+`joinReport()` returns the dataset plus matched and unmatched counts:
+
+```ts
+const { dataset, report } = orders.joinReport(customers, {
+  leftOn: 'cust',
+  rightOn: 'key',
+  how: 'left',
+});
+
+report;
+// {
+//   how: "left",
+//   leftKeys: ["cust"],
+//   rightKeys: ["key"],
+//   rowCount: 3,
+//   matched: 2,
+//   leftUnmatched: 1,
+//   rightUnmatched: 0,
+//   collisions: ["total"]
+// }
+```
+
+`joinTables(leftRows, leftColumns, rightRows, rightColumns, options)` is the standalone
+function behind `Dataset.join`, for rows you have not wrapped in a dataset.
+
+## Pivoting and melting
+
+`pivot()` turns long data into one column per distinct value; `melt()` does the reverse and
+round trips with it.
+
+```ts
+const wide = createDataset([
+  { region: 'north', q1: 10, q2: 20 },
+  { region: 'south', q1: 5, q2: 7 },
+]);
+
+const long = wide.melt({ idVars: 'region' });
+// [
+//   { region: "north", variable: "q1", value: 10 },
+//   { region: "north", variable: "q2", value: 20 },
+//   { region: "south", variable: "q1", value: 5 },
+//   { region: "south", variable: "q2", value: 7 }
+// ]
+
+long.pivot({ columns: 'variable', values: 'value' }).data;
+// [
+//   { region: "north", q1: 10, q2: 20 },
+//   { region: "south", q1: 5, q2: 7 }
+// ]
+```
+
+### Pivot options
+
+| Option      | Default            | Meaning                                                             |
+| ----------- | ------------------ | ------------------------------------------------------------------- |
+| `columns`   | required           | Column whose values become new column names                         |
+| `values`    | required           | Column whose values fill the cells                                  |
+| `aggregate` | `"first"`          | `"first"`, `"last"`, `"sum"`, `"mean"`, `"min"`, `"max"`, `"count"` |
+| `index`     | every other column | Columns that identify a row                                         |
+| `prefix`    | —                  | Prefix added to generated column names                              |
+
+```ts
+createDataset([
+  { k: 'a', v: 1 },
+  { k: 'a', v: 2 },
+  { k: 'b', v: 3 },
+]).pivot({ columns: 'k', values: 'v', aggregate: 'sum' }).data;
+// [{ a: 3, b: 3 }]
+```
+
+`pivot()` keeps generated columns in first-appearance order rather than sorting them, so
+the result is reproducible without assuming anything about the value types. A missing
+combination becomes `null`, and rows whose pivot key is missing are dropped: a missing key
+has no column name to become, and a `"null"` column would invent a category.
+
+`pivotReport()` returns the dataset plus `pivoted` (the generated column names) and
+`collapsed` (rows merged by the aggregation).
+
+### Melt options
+
+| Option         | Default                              | Meaning                                                                          |
+| -------------- | ------------------------------------ | -------------------------------------------------------------------------------- |
+| `idVars`       | required unless `valueVars` is given | Columns repeated on every output row; the rest become `variable` / `value` pairs |
+| `valueVars`    | required unless `idVars` is given    | Columns turned into `variable` / `value` pairs; the rest stay as identifiers     |
+| `variableName` | `"variable"`                         | Name of the column holding the source column name                                |
+| `valueName`    | `"value"`                            | Name of the column holding the value                                             |
+| `dropMissing`  | `false`                              | Drop rows whose value is missing                                                 |
+
+Calling `melt()` with neither `idVars` nor `valueVars` throws `ValidationError`: Numiq will
+not guess which columns are identifiers.
+
+## Concatenation
+
+`concat()` stacks rows, keeping this dataset's rows first:
+
+```ts
+const combined = q1.concat(q2);
+const many = q1.concat([q2, q3]);
+```
+
+| Option    | Default   | Meaning                                                                                                 |
+| --------- | --------- | ------------------------------------------------------------------------------------------------------- |
+| `columns` | `"union"` | `"union"` takes the union of column names and fills gaps with `null`; `"strict"` rejects any difference |
+
+`"strict"` catches schema drift a union would hide:
+
+```ts
+q1.concat(q2, { columns: 'strict' });
+// ValidationError: concat with "strict" columns requires identical column sets...
+```
+
+## Data spaces
+
+A `DataSpace` holds several datasets and the relationships between them, so the keys that
+link tables are written once instead of at every call site.
+
+```ts
+import { createDataSpace } from '@munachi-me/numiq';
+
+const space = createDataSpace('Sales');
+
+space.addDataset('orders', orders);
+space.addDataset('customers', customers);
+
+space.createRelationship({
+  name: 'orders-customers',
+  from: 'orders',
+  fromColumn: 'cust',
+  to: 'customers',
+  toColumn: 'key',
+  type: 'many-to-one',
+});
+```
+
+| Method                                                          | Purpose                                               |
+| --------------------------------------------------------------- | ----------------------------------------------------- |
+| `addDataset(name, dataset)`                                     | Add a dataset; throws on a duplicate name             |
+| `replaceDataset(name, dataset)`                                 | Swap one deliberately; re-validates its relationships |
+| `renameDataset(from, to)`                                       | Rename, carrying relationships with it                |
+| `removeDataset(name)`                                           | Remove it and the relationships that reference it     |
+| `has(name)` / `dataset(name)` / `datasetNames()` / `datasets()` | Read access                                           |
+| `setMetadata(name, key, value)`                                 | Attach metadata to one dataset                        |
+| `size` / `relationshipCount`                                    | Counts                                                |
+
+`addDataset` throws on a duplicate name rather than replacing silently, since a replacement
+would change every relationship and every later query. Datasets are held by reference, not
+copied, and stay usable on their own.
+
+### Relationships
+
+The four cardinalities are `one-to-one`, `one-to-many`, `many-to-one` and `many-to-many`,
+written from `from` to `to`. `many-to-one` is the ordinary foreign-key shape.
+
+Cardinality is enforced when the relationship is declared: `one-to-one` and `many-to-one`
+require the `to` key to be unique, `one-to-one` and `one-to-many` require the `from` key to
+be unique, and `many-to-many` requires neither. A violation names the offending value and
+how often it occurs.
+
+Referential integrity is reported, not enforced:
+
+```ts
+const [check] = space.check();
+// {
+//   relationship: { name: "orders-customers", ... },
+//   orphans: [{ from: "orders", fromColumn: "cust", to: "customers", toColumn: "key", value: "c9", rowIndex: 2 }],
+//   duplicates: [],
+//   nullKeys: 0,
+//   valid: false
+// }
+```
+
+A missing key counts toward `nullKeys` instead of `orphans`, because a null foreign key
+means "no reference", not "broken reference".
+
+### Cross-dataset operations
+
+```ts
+space.join('orders', 'customers'); // inner by default
+space.join('orders', 'customers', { how: 'full' });
+```
+
+`join` takes its keys from the relationship, so no column names are repeated. Joining the
+pair in the opposite order swaps the keys automatically. When several relationships connect
+the same two datasets, pass `{ relationship: name }` to choose one; an ambiguous join throws
+rather than guessing.
+
+`aggregate` groups by a column that lives on the related table:
+
+```ts
+space.aggregate(
+  'orders',
+  'customers',
+  { total: { column: 'total', op: 'sum' } },
+  { groupBy: 'region' },
+);
+// [{ region: "north", total: 100 }, { region: "south", total: 200 }, { region: null, total: 50 }]
+```
+
+The join runs first, then ordinary grouping and aggregation run on the result. `groupBy` is
+required: any default would silently change the shape of the answer. Because the join
+suffixes colliding columns, an aggregation over a name that exists on both sides must use
+the suffixed name (`total_left`, `total_right`).
+
+`filterRelated` keeps rows whose related record satisfies a predicate, and drops rows whose
+reference does not resolve:
+
+```ts
+space.filterRelated('orders', 'customers', (row) => row.region === 'north');
+// [{ id: 1, cust: "c1", total: 100, key: "c1", region: "north" }]
+```
+
+### Introspection
+
+```ts
+space.describeDataset('orders');
+// {
+//   name: "orders",
+//   rowCount: 3,
+//   columnCount: 3,
+//   columns: ["id", "cust", "total"],
+//   metadata: {},
+//   outgoing: ["orders-customers"],
+//   incoming: []
+// }
+
+space.describe(); // every dataset, in insertion order
+```
+
+`createDataSpace(name)` and `new DataSpace(name)` are equivalent, and both are on the default
+export.
+
+## Next steps
+
+- [Window functions and time series](/numiq/docs/window-functions)
+- [API reference: operations](/numiq/docs/api/operations)

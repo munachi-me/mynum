@@ -1,0 +1,315 @@
+---
+title: React and Next.js
+description: Optional React components for charts, tables, metrics and dashboards, including client boundaries and controlled state.
+related:
+  - /numviz/docs/installation
+  - /numviz/docs/api
+---
+
+React support is optional and lives at `@munachi-me/numviz/react`. The core package never
+imports React.
+
+```bash
+npm install @munachi-me/numviz react
+```
+
+`react` (>= 18) is an optional peer dependency. Importing `@munachi-me/numviz` never loads
+React and never requires it to be installed.
+
+## Components
+
+| Component         | Engine               | Handle                  |
+| ----------------- | -------------------- | ----------------------- |
+| `Chart`           | `createChart`        | `ChartHandle`           |
+| `DataTable`       | `createTable`        | `DataTableHandle`       |
+| `Metric`          | `createMetric`       | `MetricHandle`          |
+| `Dashboard`       | `createDashboard`    | `DashboardHandle`       |
+| `DashboardWidget` | One dashboard widget | `DashboardWidgetHandle` |
+
+Each component renders a host `div` (`data-numviz-react="chart"`, `"table"`, `"metric"`,
+`"dashboard"` or `"dashboard-widget"`) and creates the engine in an effect. Server rendering therefore emits only
+the host element; no `document` or `window` access happens during render.
+
+## Chart
+
+```tsx
+import { Chart } from '@munachi-me/numviz/react';
+
+export function RevenueChart({ rows }: { rows: Record<string, unknown>[] }) {
+  return (
+    <Chart
+      type="line"
+      data={rows}
+      x="month"
+      y="revenue"
+      title="Revenue"
+      onClick={(event) => console.log(event.label, event.value)}
+    />
+  );
+}
+```
+
+`Chart` accepts every `ChartConfig` option plus `style` (`CSSProperties`). Props are compared
+structurally: an equal configuration does not call `chart.update`, and changed data or
+options update the same instance.
+
+## DataTable
+
+```tsx
+import { DataTable } from '@munachi-me/numviz/react';
+
+export function Employees({ rows }: { rows: Record<string, unknown>[] }) {
+  return (
+    <DataTable
+      data={rows}
+      title="Employees"
+      searchable
+      pagination
+      pageSize={10}
+      selectable
+      columns={[
+        { field: 'name', label: 'Employee' },
+        { field: 'salary', label: 'Salary', format: 'currency', currency: 'USD' },
+      ]}
+    />
+  );
+}
+```
+
+`DataTable` accepts every `TableConfig` option except that `loading`, `error` and the
+controlled props are typed separately.
+
+### Controlled state
+
+Omit controlled props for uncontrolled behaviour. Provide them and update them from the
+callbacks for controlled state:
+
+```tsx
+'use client';
+
+import { useState } from 'react';
+import { DataTable } from '@munachi-me/numviz/react';
+import type { TableSortState } from '@munachi-me/numviz';
+
+export function ControlledTable({ rows }: { rows: Record<string, unknown>[] }) {
+  const [sort, setSort] = useState<TableSortState | null>(null);
+  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState('');
+  const [selected, setSelected] = useState<readonly number[]>([]);
+
+  return (
+    <DataTable
+      data={rows}
+      searchable
+      pagination
+      pageSize={10}
+      selectable
+      sort={sort}
+      page={page}
+      search={search}
+      selectedRows={selected}
+      onSortChange={setSort}
+      onPageChange={setPage}
+      onSearchChange={(query) => {
+        setSearch(query);
+        setPage(1);
+      }}
+      onSelectionChange={(indices) => setSelected(indices)}
+    />
+  );
+}
+```
+
+`loading` and `error` map to `setLoading` and `setError`:
+
+```tsx
+<DataTable data={rows} loading={isLoading} error={errorMessage} />
+```
+
+## Metric
+
+```tsx
+import { Metric } from '@munachi-me/numviz/react';
+
+export function RevenueCard({
+  rows,
+  previous,
+}: {
+  rows: Record<string, unknown>[];
+  previous: Record<string, unknown>[];
+}) {
+  return (
+    <Metric
+      name="Total Revenue"
+      data={rows}
+      column="revenue"
+      aggregation="sum"
+      format="currency"
+      icon="★"
+      variant="highlight"
+      comparison={{ data: previous, column: 'revenue', aggregation: 'sum' }}
+    />
+  );
+}
+```
+
+`Metric` accepts every `MetricConfig` option. `icon` is a text glyph or emoji string in
+React; use the vanilla engine when you need a DOM node icon. Values are computed in the
+effect, not during render.
+
+## Dashboard
+
+```tsx
+import { Dashboard, DashboardWidget } from '@munachi-me/numviz/react';
+
+export function Overview({
+  revenue,
+  monthly,
+}: {
+  revenue: Record<string, unknown>[];
+  monthly: Record<string, unknown>[];
+}) {
+  return (
+    <Dashboard
+      title="Sales Analytics"
+      layout={{ columns: { base: 1, md: 2 } }}
+      components={[
+        {
+          id: 'revenue',
+          type: 'metric',
+          name: 'Total Revenue',
+          data: revenue,
+          column: 'revenue',
+          aggregation: 'sum',
+        },
+        {
+          id: 'sales',
+          type: 'chart',
+          chartType: 'bar',
+          data: monthly,
+          x: 'month',
+          y: 'revenue',
+        },
+      ]}
+    />
+  );
+}
+```
+
+Widgets can also be declared as children. `components` and children are merged in order:
+
+```tsx
+<Dashboard title="Sales Analytics">
+  <DashboardWidget
+    id="revenue"
+    type="metric"
+    name="Total Revenue"
+    data={revenue}
+    column="revenue"
+    aggregation="sum"
+  />
+  <DashboardWidget id="sales" type="chart" chartType="bar" data={monthly} x="month" y="revenue" />
+</Dashboard>
+```
+
+Matching widget ids and types keep their engine and update in place.
+
+`DashboardWidget` also renders one widget outside a dashboard, either with direct props or
+with a `component` / `config` prop holding a `DashboardComponent`:
+
+```tsx
+<DashboardWidget
+  id="revenue"
+  type="metric"
+  name="Total Revenue"
+  data={rows}
+  column="revenue"
+  aggregation="sum"
+  containerStyle={{ maxWidth: 320 }}
+/>
+```
+
+Use `containerStyle` (or `hostStyle`) for the React host element. In the direct-props form,
+`style` belongs to the widget surface; with `component` or `config`, `style` applies to the
+host element.
+
+## Imperative handles
+
+```tsx
+import { useRef } from 'react';
+import { DataTable, type DataTableHandle } from '@munachi-me/numviz/react';
+
+const ref = useRef<DataTableHandle>(null);
+
+<DataTable ref={ref} data={rows} />;
+ref.current?.getTable()?.setSort('salary', 'desc');
+```
+
+| Handle                  | Methods                                            |
+| ----------------------- | -------------------------------------------------- |
+| `ChartHandle`           | `getChart()`, `getElement()`                       |
+| `DataTableHandle`       | `getTable()`, `getElement()`                       |
+| `MetricHandle`          | `getMetric()`, `getElement()`                      |
+| `DashboardHandle`       | `getDashboard()`, `getElement()`                   |
+| `DashboardWidgetHandle` | `getDashboard()`, `getWidget(id?)`, `getElement()` |
+
+## Next.js
+
+The React entry starts with `"use client"`, so it can be imported from a Client Component
+directly.
+
+### App Router
+
+```tsx title="app/employees/page.tsx"
+'use client';
+
+import { DataTable } from '@munachi-me/numviz/react';
+
+export default function Page({ rows }: { rows: Record<string, unknown>[] }) {
+  return <DataTable data={rows} searchable pagination />;
+}
+```
+
+Rules of thumb:
+
+- Keep data fetching on the server and pass plain, serializable records to the client.
+- Do not call `createChart`, `createDashboard`, `createTable` or `createMetric`, and do not
+  read `window` or `document`, during render or at module scope.
+- `render` callbacks receive row objects on the client. Define them in the Client Component,
+  not in a server-only module.
+- If you want no client bundle at all, use the vanilla engine inside a small Client
+  Component that calls `createTable` in an effect.
+
+### Pages Router and dynamic import
+
+If a bundler cannot process the subpath, load it without SSR:
+
+```tsx
+import dynamic from 'next/dynamic';
+
+const DataTable = dynamic(() => import('@munachi-me/numviz/react').then((mod) => mod.DataTable), {
+  ssr: false,
+});
+```
+
+### Server rendering notes
+
+- The server output is the host element only.
+- Sorting, searching, pagination and selection work after hydration; metric values are
+  computed and rendered after mounting.
+- Pagination renders one page at a time, which keeps large datasets out of the DOM in both
+  environments.
+- The vanilla `createTable` and `createMetric` engines can run in jsdom or on the server for
+  metric calculations without React.
+
+## Styling parity
+
+`theme`, `variant`, `className` and token options behave identically in the React and vanilla
+engines because both use one engine and one stylesheet. Theme custom properties are set on
+each component root, so overrides do not leak between components.
+
+## Next steps
+
+- [API reference](/numviz/docs/api)
+- [Examples](/numviz/docs/examples)
+- [Troubleshooting](/numviz/docs/troubleshooting)

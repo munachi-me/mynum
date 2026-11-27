@@ -1,0 +1,309 @@
+---
+title: Examples
+description: 'Complete, runnable Numiq workflows: load, clean, query, aggregate, analyse, validate and hand data to a visualization layer.'
+related:
+  - /numiq/docs/getting-started
+  - /numiq/docs/transformation
+  - /numiq/docs/statistics
+  - /numiq/docs/api
+---
+
+Every example on this page was run against `@munachi-me/numiq` 2.0.1. Values shown in
+comments are the actual output of that run, not illustrations.
+
+The examples share one small CSV so the steps can be read in order:
+
+```ts
+const csv = `id,name,age,region,amount,joined
+1,Ada,36,North,120,2024-01-05
+2,Grace,28,South,,2024-01-09
+3,Alan,64,North,80,2024-02-14
+4,Katherine,45,East,240,2024-02-20
+5,Ada,17,South,60,2024-03-02`;
+```
+
+## Parse text, load a file, or read a URL
+
+`parseDelimited()` parses text you already hold. The loaders take a filename (Node), a URL,
+or a `Blob`, `ArrayBuffer` or `Uint8Array`:
+
+```ts
+import { parseDelimited } from '@munachi-me/numiq';
+
+const data = parseDelimited(csv, { format: 'csv' });
+// Dataset { shape: [5, 6] }
+```
+
+```ts
+import { loadCSV, loadJSON, loadURL } from '@munachi-me/numiq';
+
+const sales = await loadCSV('sales.csv'); // Node: ./dataset/sales.csv
+const customers = await loadJSON('customers.json');
+const remote = await loadURL('https://example.com/sales.csv');
+```
+
+A plain string is always a path or URL, never inline text. Passing CSV content as a string
+throws `ENVIRONMENT_ERROR`; use `parseDelimited()` for text you already have.
+
+## Inspect before you trust
+
+```ts
+data.shape; // [5, 6]
+data.dtypes;
+// { id: 'integer', name: 'string', age: 'integer', region: 'string',
+//   amount: 'integer', joined: 'date' }
+
+data.describe().table();
+// A text table: one row per column, with count, missing, unique,
+// sum, mean, median, min, max and std.
+```
+
+`describe(column)` returns a single profile when you only care about one column:
+
+```ts
+data.describe('amount').mean; // 125
+```
+
+## Clean and derive
+
+```ts
+import { parseDelimited } from '@munachi-me/numiq';
+
+const cleaned = data
+  .fillMissing({ amount: 'median' }) // 120, 100, 80, 240, 60
+  .cast({ amount: 'number' })
+  .dropDuplicates('name')
+  .rename({ name: 'person' });
+
+cleaned.rowCount; // 4 — the second "Ada" is gone
+```
+
+`fillMissing` takes `'mean'`, `'median'`, `'mode'`, a constant, or a callback. `'mean'` and
+`'median'` throw `VALIDATION_ERROR` on a non-numeric column rather than coercing text.
+
+## Categorise with rules instead of branches
+
+`addConditionalColumn()` evaluates rules in order; the first match wins, and `else` covers
+the rest. This is the age-banding example the brief asks for:
+
+```ts
+const banded = data.addConditionalColumn(
+  'band',
+  [
+    { when: (row) => Number(row.age) < 18, then: 'Child' },
+    { when: (row) => Number(row.age) < 65, then: 'Adult' },
+  ],
+  { else: 'Elder' },
+);
+
+banded.data.map((row) => `${row.name}: ${row.band}`);
+// ['Ada: Adult', 'Grace: Adult', 'Alan: Adult', 'Katherine: Adult', 'Ada: Child']
+```
+
+Prefer `addConditionalColumnReport()` when a rule might never fire: it returns the dataset
+plus per-rule match counts.
+
+## Query
+
+```ts
+const top = data
+  .query()
+  .where('amount', '>=', 80)
+  .and('region', 'in', ['North', 'East'])
+  .orderBy('amount', 'desc')
+  .limit(3)
+  .execute();
+
+top.data.map((row) => row.name); // ['Katherine', 'Ada', 'Alan']
+```
+
+Conditions are typed values, never parsed text. `execute()` returns a new `Dataset`; the
+`Query` itself is an immutable description.
+
+## Group and aggregate
+
+```ts
+const byRegion = data.groupBy('region').aggregate({
+  total: { column: 'amount', op: 'sum' },
+  orders: { op: 'count' },
+  avg: { column: 'amount', op: 'mean' },
+});
+
+byRegion.data;
+// [
+//   { region: 'North', total: 200, orders: 2, avg: 100 },
+//   { region: 'South', total: 60, orders: 2, avg: 60 },
+//   { region: 'East', total: 240, orders: 1, avg: 240 },
+// ]
+```
+
+Groups keep first-appearance order, and `{ op: 'count' }` needs no column.
+
+## Join, pivot, melt
+
+```ts
+import { createDataset } from '@munachi-me/numiq';
+
+const regions = createDataset([
+  { region: 'North', manager: 'Nia' },
+  { region: 'South', manager: 'Sam' },
+]);
+
+const joined = data.join(regions, { on: 'region', how: 'left' });
+joined.columns; // ['id', 'name', 'age', 'region', 'amount', 'joined', 'manager']
+joined.data[0].manager; // 'Nia'
+```
+
+```ts
+const wide = data.pivot({ index: 'name', columns: 'region', values: 'amount', aggregate: 'sum' });
+wide.columns; // ['name', 'North', 'South', 'East']
+
+const long = wide.melt({ idVars: 'name' });
+long.data[0]; // { name: 'Ada', variable: 'North', value: 120 }
+```
+
+`melt()` with neither `idVars` nor `valueVars` throws `VALIDATION_ERROR`.
+
+## Windows and time
+
+```ts
+const smoothed = data.sortByTime('joined').rollingMean('avg3', 'amount', {
+  orderBy: 'joined',
+  window: 3,
+  minPeriods: 1,
+});
+
+smoothed.data.map((row) => row.avg3);
+// [120, 120, 100, 160, 126.66666666666667]
+```
+
+The default `minPeriods` equals `window`, so the first two rows would be `null` without
+lowering it.
+
+```ts
+const monthly = data.sortByTime('joined').resample({
+  every: 'month',
+  timeColumn: 'joined',
+  aggregate: { amount: 'sum', id: 'count' },
+});
+
+monthly.data;
+// [
+//   { period: '2024-01', amount: 120, id: 2 },
+//   { period: '2024-02', amount: 320, id: 2 },
+//   { period: '2024-03', amount: 60, id: 1 },
+// ]
+```
+
+## Statistics
+
+```ts
+data.correlation('age', 'amount'); // { r: 0.2137476382316888, n: 4, reason: null }
+data.fiveNumberSummary('amount'); // { min: 60, q1: 75, median: 100, q3: 150, max: 240, mean: 125, count: 4 }
+data.outliers('amount'); // { method: 'iqr', threshold: 1.5, outliers: [], fences: { lower: -37.5, upper: 262.5 }, ... }
+data.zScores('amount'); // { values: [-0.062, null, -0.558, 1.426, -0.806], mean: 125, std: 80.622, reason: null }
+data.percentileRank('amount', 120); // 75
+data.skewness('amount'); // 1.4693345482106244
+data.kurtosis('amount'); // 2.030769230769243
+```
+
+`normalize()` is a standalone function over a value list:
+
+```ts
+import { normalize } from '@munachi-me/numiq';
+
+normalize(data.column('amount').values, { method: 'minmax' });
+// [0.333, null, 0.111, 1, 0]
+```
+
+## Metrics and insights
+
+```ts
+const revenue = data.createMetric({
+  name: 'Total amount',
+  column: 'amount',
+  aggregation: 'sum',
+  groupBy: ['region'],
+});
+
+revenue.value; // 500
+revenue.byGroup().groups;
+// [
+//   { key: { region: 'North' }, value: 200, rows: 2, values: 2, reason: null },
+//   { key: { region: 'South' }, value: 60, rows: 2, values: 1, reason: null },
+//   { key: { region: 'East' }, value: 240, rows: 1, values: 1, reason: null },
+// ]
+
+const growth = data.createMetric({ name: 'Total', column: 'amount', aggregation: 'sum' });
+growth.compare({ to: 400 });
+// { value: 500, otherValue: 400, difference: 100, ratio: 1.25,
+//   percentChange: 125, percentDifference: 25, reason: null }
+```
+
+`percentChange` is `value / otherValue * 100`; `percentDifference` is the change relative to
+the baseline. Prefer the latter in new code.
+
+```ts
+data.insights().insights.map((insight) => insight.kind);
+// ['missing-data', 'trend']
+```
+
+## Validate and run a pipeline
+
+```ts
+const report = data.validate({
+  amount: { type: 'number', nullable: false },
+  region: { allowed: ['North', 'South', 'East'] },
+});
+
+report.valid; // false
+report.byCode; // { NULL_NOT_ALLOWED: 1 }
+report.issues[0];
+// { code: 'NULL_NOT_ALLOWED', message: 'Column "amount" does not allow missing values.',
+//   column: 'amount', row: 1, value: null }
+```
+
+`validate()` returns a report; `validateOrThrow()` throws a `VALIDATION_ERROR` naming the
+first issue.
+
+```ts
+import { pipeline } from '@munachi-me/numiq';
+
+const workflow = pipeline({ name: 'sales' })
+  .load(async () => data, { name: 'source' })
+  .transform((ds) => ds.fillMissing({ amount: 0 }), { name: 'fill' })
+  .validate({ amount: { type: 'number' } }, { name: 'schema' });
+
+const result = await workflow.run();
+
+result.ok; // true
+result.steps.map((step) => `${step.name}:${step.rows}`);
+// ['source:5', 'fill:5', 'schema:5']
+```
+
+## Hand the rows to Numviz
+
+Numiq and Numviz are independent packages. When you want both, pass plain rows or the
+table shape:
+
+```ts
+import { createChart, createTable } from '@munachi-me/numviz';
+import { toTableData } from '@munachi-me/numiq';
+
+createChart({ type: 'bar', data: data.data, x: 'region', y: 'amount' }).render('#chart');
+
+createTable({ data: toTableData(data) }).render('#table');
+```
+
+`toTableData()` returns `{ columns, rows }`, the shape a Numviz table accepts directly.
+
+:::note
+These examples run in Node or the browser. `render()` needs a DOM, so a chart in Node
+requires a DOM implementation such as jsdom, or the `numviz` dashboard export path.
+:::
+
+## See also
+
+- [Data loading](/numiq/docs/data-loading) for every source and option
+- [Statistics](/numiq/docs/statistics) for the full analysis surface
+- [API reference](/numiq/docs/api) for signatures and defaults

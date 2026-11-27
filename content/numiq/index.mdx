@@ -1,0 +1,120 @@
+---
+title: Introduction
+description: Numiq is a modular JavaScript and TypeScript engine for loading, normalizing, preparing, querying and analyzing structured data.
+related:
+  - /numiq/docs/getting-started
+  - /numiq/docs/datasets
+  - /numiq/docs/api
+---
+
+Numiq is a data analysis engine for JavaScript and TypeScript. You load tabular data,
+Numiq normalizes every cell, and you get an immutable `Dataset` you can inspect, clean,
+query, group, summarize and render as a table.
+
+It has no runtime dependencies, ships ESM and CommonJS builds with complete type
+declarations, and keeps filesystem access out of the browser entry point.
+
+## What Numiq does
+
+<Cards>
+  <Card title="Load and normalize" href="/numiq/docs/data-loading">
+    CSV, TSV and JSON from files, URLs, browser `Blob` objects and in-memory text. Every import
+    produces a report describing what was read and what was questionable.
+  </Card>
+  <Card title="Prepare and query" href="/numiq/docs/transformation">
+    Immutable transforms — filter, sort, select, rename, fill, replace, cast, deduplicate — plus a
+    typed query builder with boolean grouping.
+  </Card>
+  <Card title="Analyze" href="/numiq/docs/statistics">
+    Descriptions, correlations, z-scores, outlier detection, regression, hypothesis tests, metrics,
+    insights and data-quality profiles.
+  </Card>
+  <Card title="Compose" href="/numiq/docs/pipelines">
+    Joins, pivots, window functions, calendar resampling, schema validation and pipelines with
+    per-step reports and lineage.
+  </Card>
+</Cards>
+
+## Why Numiq
+
+**The source of truth is the data.** Cell normalization is conservative: whitespace is not
+trimmed, `NA` and `null` are not treated as missing, integers beyond `Number.MAX_SAFE_INTEGER`
+stay strings, and date-like strings are not silently converted to `Date` objects. Every
+relaxation is opt-in.
+
+**Undefined results are `null`.** A statistic that does not apply to a column — the mean of a
+text column, the correlation of a constant column — is `null` with a reason, never `0` and
+never `NaN`.
+
+**Datasets are immutable.** Every transformation returns a new `Dataset`. A partially built
+query is safe to reuse, and a dataset passed to another function cannot be corrupted by it.
+
+**Nothing is hidden.** Imports carry warnings, pipelines carry lineage, validation returns
+every issue, and metrics keep the definition that produced them.
+
+## Core concepts
+
+| Concept              | What it is                                                                       |
+| -------------------- | -------------------------------------------------------------------------------- |
+| `Dataset`            | An immutable table of normalized rows with typed columns.                        |
+| `Query`              | A lazy, typed condition builder that returns a new `Dataset` on `execute()`.     |
+| `GroupedDataset`     | A described split produced by `groupBy()`. Computes nothing until `aggregate()`. |
+| `DatasetDescription` | Per-column statistics from `describe()`, with `toDataset()` for tabular output.  |
+| `Metric`             | A named calculation that keeps its definition, format and row counts.            |
+| `Pipeline`           | A declared workflow of `load`, `transform`, `validate` and `tap` steps.          |
+| `DataSpace`          | A named collection of datasets and the relationships between them.               |
+
+## Architecture
+
+Numiq ships two entry points from one source tree:
+
+| Condition           | Entry               | Local files | URLs | Blobs |
+| ------------------- | ------------------- | ----------- | ---- | ----- |
+| `node`              | `dist/esm/node.js`  | Yes         | Yes  | Yes   |
+| `browser` / default | `dist/esm/index.js` | No          | Yes  | Yes   |
+
+The default entry contains no Node.js built-ins, so it bundles for the browser without
+polyfills. The `@munachi-me/numiq/core` subpath always resolves to the browser-safe build,
+even under the `node` condition, when a bundler must not see `node:fs` at all.
+
+A dataset is a thin immutable wrapper around normalized rows plus column metadata.
+Derived datasets carry the same shape and report `importReport` as `null`, because the
+source import counts would no longer describe them.
+
+## Supported environments
+
+- Node.js 18, 20 and 22 (the package declares `node >= 18`).
+- Modern browsers and bundlers, through the browser-safe entry.
+- ESM and CommonJS consumers, with type declarations for both.
+
+## Basic workflow
+
+```ts
+import { loadCSV } from '@munachi-me/numiq';
+
+const sales = await loadCSV('sales.csv'); // reads ./dataset/sales.csv
+
+const summary = sales
+  .filter((row) => Number(row.revenue) > 0)
+  .fillMissing({ region: 'Unknown' })
+  .groupBy('region')
+  .aggregate({
+    revenue: { column: 'revenue', op: 'sum' },
+    orders: { op: 'count' },
+  });
+
+summary.sort('revenue', 'desc').table();
+```
+
+<Callout type="info" title="Numiq and Numviz are independent">
+  Numiq analyses and prepares data. [Numviz](/numviz/docs) visualizes and presents it.
+  Neither package requires the other; use either on its own, or pass the documented
+  `{ columns, rows }` shape from one to the other.
+</Callout>
+
+## Where to go next
+
+- [Getting started](/numiq/docs/getting-started) — install, load, inspect and analyze in five minutes.
+- [Data loading](/numiq/docs/data-loading) — every source, option and failure mode.
+- [Dataset fundamentals](/numiq/docs/datasets) — shape, columns, inspection and immutability.
+- [API reference](/numiq/docs/api) — every public export, by category.

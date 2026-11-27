@@ -1,0 +1,182 @@
+---
+title: Grouping and aggregation
+description: Split a dataset into groups and compute counts, sums, averages and custom aggregations per group.
+related:
+  - /numiq/docs/querying
+  - /numiq/docs/statistics
+  - /numiq/docs/api/query
+---
+
+`groupBy()` describes a split and computes nothing. `aggregate()` runs it and returns an
+ordinary `Dataset`, so a summary composes with queries, sorting and preparation.
+
+```ts
+const summary = sales.groupBy('region').aggregate({
+  totalRevenue: { column: 'revenue', op: 'sum' },
+  averageOrder: { column: 'revenue', op: 'mean' },
+  orderCount: { op: 'count' },
+});
+
+summary.query().where('totalRevenue', '>', 5000).orderBy('totalRevenue', 'desc').execute();
+```
+
+## The grouped dataset
+
+| Member       | Type                                 | Description                         |
+| ------------ | ------------------------------------ | ----------------------------------- |
+| `columns`    | `readonly string[]`                  | The grouping columns                |
+| `groupCount` | `number`                             | Number of groups                    |
+| `rowCount`   | `number`                             | Rows across all groups              |
+| `sizes`      | `readonly number[]`                  | Row count per group, in group order |
+| `keys`       | `readonly Record<string, unknown>[]` | One key record per group            |
+
+```ts
+const grouped = sales.groupBy('region');
+
+grouped.columns; // ["region"]
+grouped.groupCount; // 4
+grouped.rowCount; // 50
+grouped.sizes; // [13, 13, 12, 12]
+grouped.keys; // [{ region: "North" }, { region: "West" }, ...]
+```
+
+Groups keep first-appearance order, so output is deterministic. `groupBy` accepts several
+columns, either as separate arguments or as an array:
+
+```ts
+sales.groupBy('region', 'category');
+sales.groupBy(['region', 'category']);
+```
+
+## Aggregation operations
+
+| `op`       | Result                            |
+| ---------- | --------------------------------- |
+| `count`    | Number of rows in the group       |
+| `sum`      | Sum of present numeric values     |
+| `mean`     | Mean of present numeric values    |
+| `median`   | Median of present numeric values  |
+| `min`      | Minimum value                     |
+| `max`      | Maximum value                     |
+| `first`    | First present value               |
+| `last`     | Last present value                |
+| `nunique`  | Number of distinct present values |
+| `std`      | Standard deviation                |
+| `variance` | Variance                          |
+
+```ts
+const stats = sales.groupBy('region').aggregate({
+  total: { column: 'revenue', op: 'sum' },
+  avg: { column: 'revenue', op: 'mean' },
+  n: { op: 'count' },
+  products: { column: 'product', op: 'nunique' },
+  firstProduct: { column: 'product', op: 'first' },
+});
+
+stats.table();
+```
+
+```text
+┌─────┬────────┬───────────────────┬────────────────────┬────┬──────────┬────────────────────────────┐
+│ idx │ region │ total             │ avg                │ n  │ products │ firstProduct               │
+├─────┼────────┼───────────────────┼────────────────────┼────┼──────────┼────────────────────────────┤
+│ 0   │ North  │ 6058.01           │ 466.00076923076927 │ 13 │ 5        │ Aurora Desk Lamp           │
+│ 1   │ West   │ 13021.64          │ 1001.6646153846153 │ 13 │ 5        │ Nimbus Wireless Mouse      │
+│ 2   │ East   │ 4726.64           │ 393.8866666666667  │ 12 │ 5        │ Vertex Mechanical Keyboard │
+│ 3   │ South  │ 7316.400000000001 │ 609.7              │ 12 │ 5        │ Lumen Monitor 27"          │
+└─────┴────────┴───────────────────┴────────────────────┴────┴──────────┴────────────────────────────┘
+```
+
+`count` with no column counts the rows in the group. Give it a column and it counts that
+column's present values instead, so a group of two rows where one value is missing reports
+`1`.
+
+### Dispersion
+
+`std` and `variance` default to the sample formula (`ddof: 1`). Pass `ddof: 0` for the
+population formula:
+
+```ts
+sales.groupBy('region').aggregate({
+  spread: { column: 'revenue', op: 'std', ddof: 0 },
+});
+```
+
+## Custom aggregations
+
+An aggregation entry can also be a function. Two forms exist:
+
+```ts
+const byRegion = sales.groupBy('region');
+
+// Whole group: receives every row of the group
+byRegion.aggregate({
+  spread: (rows) => {
+    const values = rows.map((row) => Number(row.revenue));
+    return Math.max(...values) - Math.min(...values);
+  },
+});
+
+// Column values: receives the present values of one column
+byRegion.aggregate({
+  revRange: {
+    column: 'revenue',
+    fn: (values) => Math.max(...values) - Math.min(...values),
+  },
+});
+```
+
+```text
+[
+  { region: "North", spread: 1046.5 },
+  { region: "West", spread: 2691.44 },
+  { region: "East", spread: 1515.3100000000002 },
+  { region: "South", spread: 1313.1000000000001 }
+]
+```
+
+The whole-group form is the right choice when the calculation needs more than one column.
+The column form is the right choice when the aggregation is a reduction over one column and
+you want Numiq to extract the values for you.
+
+## Group order and missing keys
+
+- Groups appear in first-appearance order of their key, not sorted order.
+- Rows with a missing key form their own group with a `null` key rather than being dropped.
+- Missing cells inside a group are excluded from every aggregation, so `mean` divides by the
+  number of present values, not the group size.
+
+If you want sorted output, sort the result:
+
+```ts
+summary.sort('totalRevenue', 'desc');
+```
+
+## Mapping groups
+
+`mapGroups()` runs a callback per group and concatenates the rows it returns:
+
+```ts
+sales.groupBy('region').mapGroups((rows, key) => [{ region: key.region, rows: rows.length }]);
+// [{ region: "North", rows: 13 }, ...]
+```
+
+`toDataset()` returns the rows with the grouping columns moved to the front, which is useful
+when you want the grouped rows themselves rather than an aggregation:
+
+```ts
+sales.groupBy('region', 'category').toDataset().columns;
+// ["region", "category", "order_id", "date", "product", "quantity", "revenue"]
+```
+
+## Relationship to metrics
+
+A `Metric` delegates to the same primitives `groupBy().aggregate()` uses, so a metric and a
+grouped aggregation over the same column cannot disagree. See
+[Metrics and insights](/numiq/docs/metrics).
+
+## Next steps
+
+- [Statistics and analysis](/numiq/docs/statistics)
+- [Metrics and insights](/numiq/docs/metrics)
+- [API reference: Query and aggregation](/numiq/docs/api/query)
