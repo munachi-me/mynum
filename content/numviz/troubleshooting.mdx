@@ -1,0 +1,131 @@
+---
+title: Troubleshooting
+description: Error codes and fixes for missing containers, DOM access, empty charts, export failures and accessibility questions.
+related:
+  - /numviz/docs/installation
+  - /numviz/docs/api
+---
+
+Every Numviz error is a `NumvizError` with a stable `code` and, where relevant, a `path`
+naming the configuration field.
+
+```ts
+import { NumvizError, isNumvizError } from '@munachi-me/numviz';
+
+try {
+  createChart({ type: 'bar', data: rows, x: 'month' });
+} catch (error) {
+  if (isNumvizError(error)) console.log(error.code, error.path, error.message);
+}
+```
+
+## Error codes
+
+| Code                  | Cause                                                           | Fix                                                       |
+| --------------------- | --------------------------------------------------------------- | --------------------------------------------------------- |
+| `INVALID_CONFIG`      | A required field is missing or a value is out of range          | Read `error.path`; it names the field                     |
+| `INVALID_TYPE`        | Unknown chart type                                              | Use one of the eleven documented types                    |
+| `INVALID_DATA`        | Data shape does not match the configuration                     | Array input needs `columns`; check row lengths            |
+| `INVALID_CONTAINER`   | `render()` received something that is not a selector or element | Pass a CSS selector string or an `Element`                |
+| `CONTAINER_NOT_FOUND` | The selector matched nothing                                    | Check the selector, or render after the element exists    |
+| `NO_DOM`              | Rendering without a DOM                                         | Render in a browser or a DOM implementation such as jsdom |
+| `EXPORT_FAILED`       | Export or print attempted before render, or without canvas      | Render first; use `toSVG()` where canvas is unavailable   |
+| `DESTROYED`           | The instance was used after `destroy()`                         | Create a new instance                                     |
+
+## A chart or table renders nothing
+
+- Confirm the selector matches an element. A missing selector throws
+  `CONTAINER_NOT_FOUND`; an invalid target throws `INVALID_CONTAINER`.
+- Rendering outside a DOM throws `NO_DOM`. Metrics compute without a DOM; charts and tables
+  do not.
+- An empty dataset is valid. Charts show an empty state instead of marks, and tables show
+  `emptyMessage`.
+
+## The chart is too small or too wide
+
+- Omit `width` to let the chart follow its container. Responsive charts use a
+  `ResizeObserver` when one is available.
+- Set `width` and `height` when the chart will be exported or placed in a fixed layout.
+- The parent must have a measurable width. A `display: none` container has none.
+
+## PNG export fails
+
+`chart.toPNG()` needs a rendered chart plus `Image`, `Blob`, `URL` and canvas support. It
+rejects with `EXPORT_FAILED` in Node.js, in jsdom, and in browsers that block canvas. Use
+`chart.toSVG()` for a portable vector export in those environments.
+
+## `toSVG()` throws `EXPORT_FAILED`
+
+The chart has not been rendered. `render()` first:
+
+```ts
+chart.render('#chart');
+const svg = chart.toSVG();
+```
+
+## Standalone export fails
+
+- `dashboard.export()` is Node-only. Call it from a build script, a server action or a CLI,
+  never from browser code.
+- Custom components and custom filters cannot be exported because their render functions are
+  not serializable. Remove them, or export a version without them.
+- External data mode writes `data/data.json` and fetches it at runtime. Serve the directory
+  over HTTP; browsers block local JSON requests from `file://`.
+- Single-file output requires `data: "embedded"`.
+
+## Printing hides too much or too little
+
+```ts
+createDashboard({
+  ...config,
+  print: { hideFilters: false, hideHeader: true, hideFooter: true },
+});
+```
+
+`print: false` removes the print configuration; `print()` still calls `window.print()`.
+
+## React renders an empty host element
+
+React components render a host element and attach the engine after mounting. During server
+rendering only the host element is emitted, which is intentional. Inspect chart or table
+markup only after the component has mounted in the browser.
+
+## Tables are slow with very large datasets
+
+Tables render only the current page when pagination is enabled. Keep pagination on for large
+data, or pass a pre-aggregated dataset. Sorting and searching still operate on the full
+normalized row list, and export uses the same filtered and sorted rows.
+
+## Charts produce many DOM nodes
+
+Every visible point is an SVG mark. For dense series, aggregate or sample before rendering,
+or disable labels and tooltips. Charts with thousands of marks stay functional but are
+expensive to animate and export.
+
+## A report title is missing
+
+`createReport()` uses `metadata.title` when `title` is absent. An empty `title` string throws
+`INVALID_CONFIG`.
+
+## Focus or screen-reader output is unclear
+
+- Charts expose `role="img"`, an `aria-label`, and `<title>` and `<desc>` elements. Use
+  `chart.getSummary()` for the same description in tests or custom UI.
+- Chart marks and legend items are focusable; Enter or Space activates a click handler.
+- Table headers use `scope="col"`, sortable headers expose `aria-sort`, and status updates
+  use a polite live region.
+- Give `ariaLabel`, `title` and `caption` values that describe the data instead of repeating
+  the component name.
+
+## The theme does not apply
+
+- `theme.mode: "system"` follows the operating system preference when available. In an
+  environment without `matchMedia`, it resolves to light.
+- Theme tokens are set as CSS custom properties on the component root. A parent rule with
+  `!important` can still win; check the cascade.
+- Each widget can override the dashboard theme; check the widget's own `theme`.
+
+## Next steps
+
+- [API reference](/numviz/docs/api)
+- [Examples](/numviz/docs/examples)

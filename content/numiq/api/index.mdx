@@ -1,0 +1,177 @@
+---
+title: API overview
+description: Entry points, error taxonomy and the shared types every Numiq export uses.
+related:
+  - /numiq/docs/api/io
+  - /numiq/docs/api/datasets
+---
+
+This reference covers every public export of `@munachi-me/numiq` 2.0.1. Types are listed
+where they are part of a signature.
+
+## Entry points
+
+| Specifier                        | Local files | Notes                                                                  |
+| -------------------------------- | ----------- | ---------------------------------------------------------------------- |
+| `@munachi-me/numiq`              | Node only   | Resolves to `node.js` under the `node` condition, `index.js` otherwise |
+| `@munachi-me/numiq/core`         | No          | Always the browser-safe build, even under `node`                       |
+| `@munachi-me/numiq/package.json` | —           | Package metadata                                                       |
+
+Both root entries export the same members. Only `loadCSV`, `loadTSV` and `loadJSON` differ:
+in the Node entry they are bound to a filesystem reader.
+
+Named exports and a default namespace are both available:
+
+```ts
+import { createDataset, mean } from '@munachi-me/numiq';
+import Numiq from '@munachi-me/numiq';
+
+Numiq.createDataset === createDataset; // true
+```
+
+## Where each export is documented
+
+| Page                                           | Covers                                                                                           |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| [I/O](/numiq/docs/api/io)                      | Loaders, parsers, normalization, interchange, chunking, table rendering                          |
+| [Datasets](/numiq/docs/api/datasets)           | `createDataset`, the `Dataset` class and its methods                                             |
+| [Query and aggregation](/numiq/docs/api/query) | `Query`, `GroupedDataset`, aggregation primitives                                                |
+| [Statistics](/numiq/docs/api/statistics)       | Descriptions, statistics, distributions, tests, regression, quality, metrics, insights, sampling |
+| [Operations](/numiq/docs/api/operations)       | Joins, reshaping, windows, time series, validation, pipelines, data spaces                       |
+
+## Errors
+
+All errors extend `NumiqError`, which extends `Error` and carries a stable `code`.
+
+```ts
+class NumiqError extends Error {
+  readonly code: NumiqErrorCode;
+}
+```
+
+| Class                 | `code`              | Raised when                                              | Extra fields                                |
+| --------------------- | ------------------- | -------------------------------------------------------- | ------------------------------------------- |
+| `ValidationError`     | `VALIDATION_ERROR`  | Bad arguments, unsupported input, malformed rows         | —                                           |
+| `ImportError`         | `IMPORT_ERROR`      | A source could not be read                               | `status?`, `source?`                        |
+| `FormatError`         | `FORMAT_ERROR`      | Format is undetectable, unsupported, or malformed        | —                                           |
+| `EnvironmentError`    | `ENVIRONMENT_ERROR` | An API is unavailable here, e.g. filesystem in a browser | —                                           |
+| `ColumnNotFoundError` | `COLUMN_NOT_FOUND`  | A column does not exist                                  | `column`, `available`                       |
+| `PipelineError`       | `PIPELINE_ERROR`    | A pipeline step failed with `throwOnError`               | `step`, `stepIndex`, `stepKind`, `original` |
+
+```ts
+import { NumiqError, ColumnNotFoundError } from '@munachi-me/numiq';
+
+try {
+  data.column('revenue');
+} catch (error) {
+  if (error instanceof ColumnNotFoundError) {
+    console.log(error.available);
+  } else if (error instanceof NumiqError) {
+    console.log(error.code);
+  }
+}
+```
+
+## Shared types
+
+### Values and columns
+
+```ts
+type Row = Record<string, unknown>;
+
+type DType =
+  'string' | 'number' | 'integer' | 'boolean' | 'date' | 'datetime' | 'time' | 'unknown' | 'mixed';
+
+type ColumnType = 'string' | 'number' | 'integer' | 'boolean' | 'date' | 'datetime' | 'time';
+
+interface ColumnTypeSpec {
+  type: ColumnType;
+  format?: string; // reserved; currently has no effect
+}
+
+interface ColumnSchema {
+  name: string;
+  type: DType;
+  nullable: boolean;
+}
+```
+
+`DType` is the inferred type reported by `dtypes`. `ColumnType` is the narrower set accepted
+by `schema` and `cast()`. `unknown` means no present values; `mixed` means no single type
+fits.
+
+### Dataset options and views
+
+```ts
+interface DatasetOptions {
+  columns?: readonly string[];
+  name?: string;
+  metadata?: Readonly<Record<string, unknown>>;
+  normalization?: Partial<NormalizationPolicy>;
+}
+
+interface ColumnView {
+  name: string;
+  type: DType;
+  values: readonly unknown[];
+  missing: number;
+  unique: number;
+}
+
+interface DatasetInfo {
+  name: string;
+  rowCount: number;
+  columnCount: number;
+  shape: readonly [number, number];
+  dtypes: Readonly<Record<string, DType>>;
+  missingValues: number;
+  memoryHint: string;
+}
+
+interface TableOptions {
+  maxRows?: number; // default 1000
+  maxColumns?: number; // default 20
+  maxCellWidth?: number; // default 28
+  showIndex?: boolean; // default true
+  showShape?: boolean; // default true
+}
+```
+
+### Normalization
+
+```ts
+interface NormalizationPolicy {
+  trimStrings: boolean; // default false
+  emptyStringAsNull: boolean; // default true
+  inferTypes: boolean; // default true
+  nullValues: readonly string[]; // default [""]
+}
+
+interface ImportWarning {
+  code: string;
+  message: string;
+  row?: number;
+  column?: string;
+}
+
+interface ImportReport {
+  format: 'csv' | 'tsv' | 'json';
+  source: string;
+  rowsRead: number;
+  rowsImported: number;
+  columns: readonly string[];
+  missingByColumn: Readonly<Record<string, number>>;
+  warnings: readonly ImportWarning[];
+  normalization: Readonly<NormalizationPolicy>;
+  delimiter?: string;
+  contentType?: string;
+}
+```
+
+`DEFAULT_NORMALIZATION` is the frozen default policy; `resolveNormalization(partial)`
+merges an override over it.
+
+## Next
+
+- [I/O](/numiq/docs/api/io)
+- [Datasets](/numiq/docs/api/datasets)

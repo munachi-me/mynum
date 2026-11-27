@@ -1,0 +1,279 @@
+---
+title: Data cleaning and transformation
+description: Filter, sort, select, rename, fill gaps, replace values, derive columns, cast types, deduplicate and sample — all without mutating the source.
+related:
+  - /numiq/docs/querying
+  - /numiq/docs/datasets
+  - /numiq/docs/api/datasets
+---
+
+Every method on this page returns a new `Dataset`. The source is never modified, and the
+result chains with the rest of the API.
+
+## Row and column selection
+
+| Method                     | Description                                    |
+| -------------------------- | ---------------------------------------------- |
+| `filter(predicate)`        | Rows where `predicate(row, index)` is true     |
+| `sort(column, direction?)` | Sorted copy; `"asc"` (default) or `"desc"`     |
+| `select(columns)`          | Only the named columns, in the requested order |
+| `limit(count)`             | At most `count` rows from the start            |
+| `head(n?)` / `tail(n?)`    | First or last `n` rows (default 5)             |
+
+```ts
+const top = sales
+  .filter((row) => Number(row.revenue) > 100)
+  .sort('revenue', 'desc')
+  .select(['order_id', 'product', 'revenue'])
+  .limit(10);
+```
+
+Sorting is total and deterministic: missing values (`null` / `undefined`) sort last in both
+directions, numbers and dates compare numerically, everything else compares as text, and
+equal values keep their original order.
+
+## Renaming and dropping columns
+
+```ts
+sales.drop('category'); // remove one column
+sales.drop(['category', 'region']); // remove several
+sales.rename({ revenue: 'amount' }); // preserve position and values
+```
+
+`rename` leaves the columns it is not given untouched. A mapping that names a column that
+does not exist throws `ColumnNotFoundError`, and renaming two columns to the same name
+throws `ValidationError`.
+
+## Missing values
+
+| Method                           | Description                                         |
+| -------------------------------- | --------------------------------------------------- |
+| `dropMissing(options?)`          | Drop rows with missing cells                        |
+| `fillMissing(strategyOrMapping)` | Fill gaps with a strategy, a constant or a callback |
+
+`dropMissing` options:
+
+| Option    | Default      | Meaning                                                                      |
+| --------- | ------------ | ---------------------------------------------------------------------------- |
+| `columns` | every column | Only consider these columns                                                  |
+| `how`     | `"any"`      | `"any"` drops a row with any missing cell; `"all"` only when all are missing |
+
+```ts
+sales.dropMissing(); // any missing cell drops the row
+sales.dropMissing({ how: 'all' });
+sales.dropMissing({ columns: ['revenue'] });
+```
+
+`fillMissing` accepts a single strategy for every column, or a per-column mapping:
+
+```ts
+sales.select(['quantity', 'revenue']).fillMissing('mean'); // one strategy, numeric columns
+sales.fillMissing({ quantity: 0, region: 'Unknown' });
+sales.fillMissing({ revenue: 'median' });
+```
+
+Strategies are `"mean"`, `"median"`, `"mode"`, a constant (`string`, `number`, `boolean`,
+`Date`, `null`), or a callback `(row, index) => value`.
+
+Strategies never coerce. `"mean"` and `"median"` require a numeric column and throw
+`ValidationError` on text rather than parsing it:
+
+```ts
+createDataset([{ city: 'north' }, { city: null }]).fillMissing({ city: 'mean' });
+// ValidationError: fillMissing("mean") needs a numeric column, but "city" is "string".
+```
+
+A column with no present values is left untouched, and a per-column mapping applies only to
+the columns it names.
+
+## Replacing values
+
+`replace(rules)` maps each column to one rule or a list of rules. Four rule forms are
+supported:
+
+```ts
+const data = createDataset([
+  { name: 'Ada', age: 12, city: ' north ' },
+  { name: 'Lin', age: 41, city: null },
+  { name: 'Kai', age: 72, city: 'south' },
+]);
+
+// 1. Exact value
+data.replace({ city: { from: null, to: 'n/a' } });
+
+// 2. Any of several values
+data.replace({ city: [{ from: [' north ', 'south'], to: 'known' }] });
+
+// 3. Predicate
+data.replace({ age: { match: (value) => Number(value) < 18, to: 'minor' } });
+
+// 4. Callback
+data.replace({ age: (value) => (Number(value) > 60 ? 'senior' : value) });
+```
+
+Rules in a list are applied in order, and the first rule that matches a value wins.
+
+`replace` compares by value and type, so `1` never matches `"1"`, and `null` and
+`undefined` count as one missing value.
+
+## Deriving columns
+
+| Method                                        | Description                                               |
+| --------------------------------------------- | --------------------------------------------------------- |
+| `map(column, callback)`                       | Transform one column in place, from `(value, row, index)` |
+| `addColumn(name, callbackOrValues)`           | Append a computed column, or a list of values             |
+| `addConditionalColumn(name, rules, options?)` | Append a column from ordered rules                        |
+
+```ts
+sales.map('revenue', (value) => Math.round(Number(value)));
+
+sales.addColumn('tax', (row) => Number(row.revenue) * 0.2);
+
+sales.addColumn('flag', [true, false, true]); // must match the row count exactly
+```
+
+`addColumn` with an array throws `ValidationError` when the length differs from the row
+count. `map` throws when the column does not exist, and names the operation, row and column
+when your callback throws:
+
+```ts
+data.map('name', () => {
+  throw new Error('boom');
+});
+// ValidationError: map failed at row 0, column "name": boom
+```
+
+The original error is attached as `cause`.
+
+## Conditional columns
+
+`addConditionalColumn()` builds a column from ordered rules. The first rule whose `when`
+returns `true` supplies the value, so later rules only see rows earlier rules did not claim.
+
+```ts
+const banded = sales.addConditionalColumn(
+  'category',
+  [
+    { when: (row) => row.age !== null && Number(row.age) < 18, then: 'Child' },
+    { when: (row) => row.age !== null && Number(row.age) < 65, then: 'Adult' },
+    { when: (row) => row.age !== null && Number(row.age) >= 65, then: 'Elder' },
+  ],
+  { else: 'Unknown' },
+);
+```
+
+- `then` and `else` accept a static value or a callback.
+- `else` defaults to `null`.
+- The value is cloned per row, so a shared object or `Date` is never aliased.
+
+`addConditionalColumnReport()` returns the same dataset plus per-rule match counts, which
+makes a rule that never fires visible:
+
+```ts
+const { dataset, report } = sales.addConditionalColumnReport('band', rules, { else: 'Other' });
+
+report.matched; // [21, 14] — one count per rule
+report.unmatched; // 15
+```
+
+<Callout type="warn" title="Predicates are evaluated verbatim">
+  A `null` cell is passed through as `null`, and `null < 18` is `true` in JavaScript. Test
+  for missing first, as in the example above. Numiq does not rewrite your predicate.
+</Callout>
+
+## Casting
+
+`cast(schema)` converts columns to explicit types:
+
+```ts
+const typed = createDataset([{ n: '1', d: '2026-01-04', t: '09:30:00', b: 'true' }]).cast({
+  n: 'number',
+  d: 'date',
+  t: 'time',
+  b: 'boolean',
+});
+
+typed.data;
+// [{ n: 1, d: Date("2026-01-04T00:00:00.000Z"), t: "09:30:00", b: true }]
+```
+
+Casting is strict, and a failure throws `ValidationError` naming the row and column:
+
+```ts
+createDataset([{ n: 'x' }]).cast({ n: 'number' });
+// ValidationError: cast failed at row 0, column "n": "x" is not a valid number
+```
+
+`date` and `datetime` require ISO input and produce `Date` objects at UTC midnight. `time`
+stays a canonical `HH:MM:SS` string. `cast()` uses the same type names as an import
+`schema`, but throws `ValidationError` instead of `FormatError`, because it runs after the
+import and has no format context to blame.
+
+## How the four column operations differ
+
+| Method                              | Input               | Replaces the column?        | Best for                                      |
+| ----------------------------------- | ------------------- | --------------------------- | --------------------------------------------- |
+| `map(column, fn)`                   | One existing column | Yes                         | A uniform transformation of every value       |
+| `replace(rules)`                    | Rules per column    | Yes, matched values only    | Correcting specific values or tokens          |
+| `cast(schema)`                      | Type names          | Yes, changes the value type | Turning text into numbers, dates, booleans    |
+| `addConditionalColumn(name, rules)` | Ordered predicates  | No, adds a new column       | Branching labels derived from several columns |
+
+`map` runs on every value; `replace` only on matches; `cast` converts representation;
+`addConditionalColumn` classifies a row and leaves the source columns in place.
+
+## Duplicates and sampling
+
+```ts
+sales.dropDuplicates(); // whole-row duplicates
+sales.dropDuplicates(['order_id']); // by key
+sales.sample(100); // random rows
+sales.sample(100, { seed: 42 }); // reproducible
+sales.sample(100, { replace: true }); // with replacement
+```
+
+`dropDuplicates` keeps the first row of each distinct combination. Comparison is by value
+and type, so `1` and `"1"` are different, and every missing value counts as one value.
+
+`sample` is deterministic when `seed` is given: the same seed produces the same rows.
+
+## Text normalization
+
+`normalizeText()` trims, collapses whitespace and changes case, and reports what it changed
+instead of asking you to trust it:
+
+```ts
+const { dataset, changes, changedRows } = sales.normalizeText({
+  whitespace: 'trim',
+  case: 'title',
+});
+
+changedRows; // 3
+changes; // [{ column: "city", changed: 3, examined: 4, examples: [...] }]
+```
+
+| Option            | Default  | Meaning                                     |
+| ----------------- | -------- | ------------------------------------------- |
+| `whitespace`      | `"trim"` | `"trim"`, `"collapse"` or `"none"`          |
+| `case`            | —        | `"lower"`, `"upper"` or `"title"`           |
+| `extraWhitespace` | —        | Additional characters treated as whitespace |
+
+Non-string cells are left untouched rather than coerced, so a numeric column stays numeric.
+The return value is an object, not a `Dataset`, because the change report is part of the
+result.
+
+## Errors
+
+| Situation                              | Error                                              |
+| -------------------------------------- | -------------------------------------------------- |
+| Unknown column                         | `ColumnNotFoundError`                              |
+| Callback throws                        | `ValidationError` naming operation, row and column |
+| Bad argument or length mismatch        | `ValidationError`                                  |
+| `"mean"` / `"median"` on a text column | `ValidationError`                                  |
+
+All of these extend `NumiqError` and carry a stable `code`.
+
+## Next steps
+
+- [Querying](/numiq/docs/querying) — typed conditions, ordering and projection.
+- [Grouping and aggregation](/numiq/docs/grouping)
+- [API reference: Dataset](/numiq/docs/api/datasets)

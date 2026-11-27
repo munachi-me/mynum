@@ -1,0 +1,108 @@
+---
+title: Installation
+description: Package requirements, entry points, module formats and bundler configuration for Numiq.
+related:
+  - /numiq/docs/getting-started
+  - /numiq/docs/compatibility
+---
+
+## Install
+
+```bash
+npm install @munachi-me/numiq
+```
+
+```bash
+pnpm add @munachi-me/numiq
+```
+
+```bash
+yarn add @munachi-me/numiq
+```
+
+The package name is scoped: `@munachi-me/numiq`.
+
+## Requirements
+
+| Requirement          | Value                                           |
+| -------------------- | ----------------------------------------------- |
+| Node.js              | 18 or later (the package declares `node >= 18`) |
+| Runtime dependencies | None                                            |
+| Type declarations    | Bundled, for both ESM and CommonJS              |
+| Package format       | ESM source with a CommonJS build                |
+
+## Entry points
+
+Numiq publishes three entry points from one source tree:
+
+| Import                                         | Resolves to                                                | Local files | URLs | Blobs |
+| ---------------------------------------------- | ---------------------------------------------------------- | ----------- | ---- | ----- |
+| `@munachi-me/numiq` under the `node` condition | `dist/esm/node.js` (or `dist/cjs/node.js` under `require`) | Yes         | Yes  | Yes   |
+| `@munachi-me/numiq` in a browser or bundler    | `dist/esm/index.js`                                        | No          | Yes  | Yes   |
+| `@munachi-me/numiq/core`                       | The browser-safe build, in both conditions                 | No          | Yes  | Yes   |
+
+The default namespace object and every named export are identical between the two root
+entries, except for the three file loaders, which are bound to a filesystem reader only in
+the Node entry.
+
+Use `@munachi-me/numiq/core` when a bundler must never see `node:fs` — for example when a
+shared module is imported by both a server and a client bundle.
+
+## Importing
+
+Named imports are the documented style:
+
+```ts
+import { loadCSV, createDataset, mean } from '@munachi-me/numiq';
+```
+
+A default namespace is also exported. Every member is the same object as its named
+export, so the two styles cannot diverge:
+
+```ts
+import Numiq from '@munachi-me/numiq';
+
+const data = await Numiq.loadCSV('sales.csv');
+```
+
+CommonJS consumers can require the package; the `require` condition resolves to the
+CommonJS build:
+
+```js
+const { createDataset } = require('@munachi-me/numiq');
+```
+
+## Bundler notes
+
+- The browser-safe entry has no Node.js built-ins, so no polyfills are required.
+- The package is side-effect free; nothing runs on import.
+- No CSS, fonts or assets are shipped. Numiq only produces data and text tables.
+
+<Callout type="info" title="Next.js">
+  Numiq can be imported in Server Components, Route Handlers and Client Components. Local file
+  loading belongs on the server; pass the resulting rows or an interchange payload to the client
+  instead of a filename.
+</Callout>
+
+## Verify the install
+
+```ts
+import pkg from '@munachi-me/numiq/package.json' with { type: 'json' };
+
+console.log(pkg.version); // "2.0.1"
+```
+
+Importing `package.json` needs an import attribute in Node.js and is unnecessary in most
+apps. The simpler check is that the import resolves and a dataset builds:
+
+```ts
+import { createDataset } from '@munachi-me/numiq';
+
+const data = createDataset([{ a: 1 }, { a: 2 }]);
+console.log(data.shape); // [2, 1]
+```
+
+## Next steps
+
+- [Getting started](/numiq/docs/getting-started)
+- [Compatibility and troubleshooting](/numiq/docs/compatibility)

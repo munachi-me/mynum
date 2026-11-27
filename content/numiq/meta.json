@@ -1,0 +1,24 @@
+{
+  "title": "Numiq",
+  "pages": [
+    "index",
+    "---Get started---",
+    "getting-started",
+    "installation",
+    "---Guides---",
+    "data-loading",
+    "datasets",
+    "transformation",
+    "querying",
+    "grouping",
+    "statistics",
+    "metrics",
+    "joins",
+    "window-functions",
+    "pipelines",
+    "---Reference---",
+    "examples",
+    "api",
+    "compatibility"
+  ]
+}

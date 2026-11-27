@@ -1,0 +1,320 @@
+---
+title: Charts
+description: Eleven SVG chart types, their data shapes, options, and the lifecycle methods that update and export them.
+related:
+  - /numviz/docs/tables
+  - /numviz/docs/api
+---
+
+`createChart(config)` validates the configuration immediately and renders when you call
+`render()`. The result is an SVG built in the target element's own document.
+
+```ts
+import { createChart } from '@munachi-me/numviz';
+
+const chart = createChart({
+  type: 'bar',
+  data: rows,
+  x: 'month',
+  y: 'revenue',
+  title: 'Monthly revenue',
+});
+
+chart.render('#chart');
+```
+
+## Chart types
+
+| `type`             | Shape                         | Notes                                                   |
+| ------------------ | ----------------------------- | ------------------------------------------------------- |
+| `"bar"`            | Category × value              | Vertical bars; grouped when several series are supplied |
+| `"grouped-bar"`    | Category × value              | Side-by-side bars per category                          |
+| `"stacked-bar"`    | Category × value              | Series stacked per category                             |
+| `"horizontal-bar"` | Category × value              | Categories on the Y axis                                |
+| `"line"`           | Category or date × value      | One or more lines, with gaps for missing values         |
+| `"area"`           | Category or date × value      | Lines with filled areas                                 |
+| `"scatter"`        | Numeric or date X × numeric Y | Points; no category axis                                |
+| `"histogram"`      | One value field in `y`        | Automatic or configured bins; `x` is not used           |
+| `"radar"`          | Category spokes × value       | One polygon per series                                  |
+| `"pie"`            | Category × value              | Share of total; legend shown by default                 |
+| `"doughnut"`       | Category × value              | Pie with an inner radius and centre total               |
+
+## Data shapes
+
+### Records
+
+```ts
+createChart({
+  type: 'bar',
+  data: [
+    { month: 'Jan', revenue: 32000 },
+    { month: 'Feb', revenue: '41000' }, // numeric strings are normalized
+  ],
+  x: 'month',
+  y: 'revenue',
+});
+```
+
+### Arrays of arrays
+
+```ts
+createChart({
+  type: 'line',
+  data: [
+    ['Jan', 1200],
+    ['Feb', 1450],
+  ],
+  columns: [
+    { key: 'month', label: 'Month' },
+    { key: 'users', label: 'Users', type: 'number' },
+  ],
+  x: 'month',
+  y: 'users',
+});
+```
+
+`columns` is required for array input: without it there are no field names to reference.
+A column definition is `{ key, label?, type? }`, where `type` is `"number"`, `"date"`,
+`"string"` or `"boolean"`.
+
+### Dataset-like objects
+
+```ts
+createChart({
+  type: 'bar',
+  data: {
+    columns: [
+      { key: 'region', label: 'Region' },
+      { key: 'orders', label: 'Orders', type: 'number' },
+    ],
+    rows: [
+      ['North', 1240],
+      ['South', 980],
+    ],
+  },
+  x: 'region',
+  y: 'orders',
+});
+```
+
+Numviz reads `{ columns, rows }` or `{ columns, data }`. That shape is compatible with a
+Numiq dataset, but Numviz only depends on the public shape — never on Numiq internals. A
+Numiq `Dataset` exposes `data` as records, which Numviz accepts directly:
+
+```ts
+createChart({ type: 'bar', data: dataset, x: 'region', y: 'revenue' });
+```
+
+Input is never mutated. Values are normalized once into `chart.data`, where each row has
+`index`, `values` and `source`.
+
+## Multiple series
+
+```ts
+createChart({
+  type: 'grouped-bar',
+  data: [
+    { month: 'Jan', revenue: 32000, expenses: 21000 },
+    { month: 'Feb', revenue: 41000, expenses: 24000 },
+  ],
+  x: 'month',
+  y: 'revenue',
+  series: [
+    { field: 'revenue', label: 'Revenue', color: '#6366F1' },
+    { field: 'expenses', label: 'Expenses', color: '#F59E0B' },
+  ],
+  legend: { position: 'top' },
+});
+```
+
+Omit `series` and Numviz creates one series from `y`. `line`, `area`, `scatter`, `radar`,
+`bar`, `grouped-bar` and `stacked-bar` support multiple series; `pie`, `doughnut`,
+`horizontal-bar` and `histogram` read a single value field.
+
+## Configuration
+
+| Option              | Default                                        | Meaning                                                  |
+| ------------------- | ---------------------------------------------- | -------------------------------------------------------- |
+| `type`              | required                                       | One of the eleven chart types                            |
+| `data`              | required                                       | Records, arrays with `columns`, or a dataset-like object |
+| `x` / `category`    | required except histograms                     | Category or X field                                      |
+| `y` / `value`       | required except histograms                     | Value field                                              |
+| `series`            | one series from `y`                            | Series definitions                                       |
+| `columns`           | —                                              | Required for array input                                 |
+| `title`, `subtitle` | —                                              | Rendered above the plot                                  |
+| `width`, `height`   | `720` × `380`                                  | Base SVG size                                            |
+| `palette`           | theme palette                                  | Series colours                                           |
+| `background`        | theme background                               | Chart background                                         |
+| `className`         | —                                              | Extra class on the chart root                            |
+| `legend`            | `false` (pie: shown)                           | `boolean` or `LegendConfig`                              |
+| `labels`            | `false`                                        | `boolean` or `LabelConfig`                               |
+| `tooltip`           | shown                                          | `boolean` or `TooltipConfig`                             |
+| `margin`            | `{ top: 16, right: 20, bottom: 44, left: 56 }` | `number` or `Partial<MarginConfig>`                      |
+| `theme`             | light tokens                                   | `ThemeConfig`                                            |
+| `ariaLabel`         | title                                          | Accessible name                                          |
+| `xAxis`, `yAxis`    | shown with grid                                | `AxisConfig`                                             |
+| `bins`              | Sturges-like rule                              | Histogram bins                                           |
+| `responsive`        | `true` when `width` is omitted                 | Follow the container width                               |
+| `animation`         | enabled                                        | `boolean` or `{ enabled, duration }`                     |
+| `selectedIndex`     | `null`                                         | Initially selected point or category                     |
+| `onClick`           | —                                              | Click handler                                            |
+
+### Axes
+
+```ts
+interface AxisConfig {
+  title?: string;
+  show?: boolean;
+  grid?: boolean;
+  rotate?: number; // tick label rotation in degrees
+  tickFormat?: (value: number | string | Date) => string;
+  min?: number; // numeric axes only
+  max?: number; // numeric axes only
+}
+```
+
+`min` and `max` are ignored on category axes, because a category axis has no numeric
+domain to clamp.
+
+### Legend and labels
+
+```ts
+interface LegendConfig {
+  show?: boolean;
+  position?: 'top' | 'bottom' | 'left' | 'right';
+  interactive?: boolean; // click a legend entry to toggle its series
+}
+
+interface LabelConfig {
+  show?: boolean;
+  position?: 'auto' | 'inside' | 'outside';
+  formatter?: (value: number, label: string) => string;
+}
+```
+
+### Tooltips
+
+```ts
+interface TooltipConfig {
+  show?: boolean;
+  formatter?: (value: number, context: TooltipContext) => string;
+}
+
+interface TooltipContext {
+  readonly label: string;
+  readonly field: string;
+  readonly index: number;
+  readonly series?: string;
+}
+```
+
+## Theming
+
+```ts
+createChart({
+  type: 'bar',
+  data,
+  x: 'month',
+  y: 'revenue',
+  theme: {
+    mode: 'dark',
+    accent: '#16A34A',
+    colors: { surface: '#141414', text: '#F5F5F0' },
+    chartPalette: ['#16A34A', '#0A0A0A', '#737373'],
+    borderRadius: 4,
+  },
+});
+```
+
+| `ThemeConfig` field                                                                                                        | Purpose                                                                                                                              |
+| -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `mode`                                                                                                                     | `"light"`, `"dark"` or `"system"`                                                                                                    |
+| `colors`                                                                                                                   | Friendly aliases: `primary`, `background`, `surface`, `text`, `mutedText`, `border`, `grid`, `positive`, `warning`, `danger`, `info` |
+| `accent`                                                                                                                   | Primary accent                                                                                                                       |
+| `fontFamily`                                                                                                               | Font stack                                                                                                                           |
+| `borderRadius`                                                                                                             | Corner radius in pixels                                                                                                              |
+| `chartPalette`                                                                                                             | Series colours                                                                                                                       |
+| `background`, `surface`, `surfaceElevated`, `text`, `mutedText`, `border`, `grid`, `positive`, `warning`, `danger`, `info` | Direct token overrides                                                                                                               |
+
+`mode: "system"` follows the operating system preference when available. Resolved tokens
+are applied to the chart element as CSS custom properties, so nested content can read them.
+
+## Lifecycle
+
+| Method                             | Description                                               |
+| ---------------------------------- | --------------------------------------------------------- |
+| `render(target)`                   | Render into a selector or element; returns the chart      |
+| `update(config)`                   | Replace configuration and redraw if rendered              |
+| `destroy()`                        | Remove rendered output and release listeners              |
+| `setSeriesVisible(index, visible)` | Show or hide a series, mirroring a legend click           |
+| `setSelectedIndex(index \| null)`  | Select a point or category, or clear                      |
+| `getSelectedIndex()`               | The current selection                                     |
+| `getSummary()`                     | Plain-text description for assistive technology and tests |
+| `toSVG(options?)`                  | Serialize the rendered chart to a standalone SVG string   |
+| `toPNG(options?)`                  | Rasterize to a PNG `Blob` in a browser                    |
+
+```ts
+chart.render('#chart');
+
+chart.getSummary();
+// "Revenue. A bar chart of revenue by month with 3 points across the revenue series."
+
+const svg = chart.toSVG({ width: 1200, height: 720 });
+const png = await chart.toPNG({ scale: 2 });
+```
+
+`toSVG()` requires a rendered chart and throws `EXPORT_FAILED` otherwise. `toPNG()` uses the
+browser image and canvas APIs and rejects with `EXPORT_FAILED` where canvas is unavailable.
+
+## Events
+
+```ts
+createChart({
+  type: 'bar',
+  data,
+  x: 'region',
+  y: 'revenue',
+  onClick: (event) => {
+    console.log(event.label, event.series, event.value, event.index);
+  },
+});
+```
+
+```ts
+interface ChartClickEvent {
+  readonly type: ChartType;
+  readonly label: string;
+  readonly field: string;
+  readonly series?: string;
+  readonly value: number | null;
+  readonly index: number;
+  readonly originalEvent: Event;
+}
+```
+
+## Accessibility
+
+- The SVG carries `role="img"` and an accessible name, defaulting to the title.
+- `getSummary()` describes the chart type, both fields, the point count and the series.
+- `prefers-reduced-motion: reduce` disables mark animation and tooltip transitions.
+- Values are also readable as text through the tooltip and, where enabled, data labels —
+  colour is never the only channel.
+
+## Errors
+
+| Situation                                          | Error            |
+| -------------------------------------------------- | ---------------- |
+| Unknown `type`                                     | `INVALID_TYPE`   |
+| Missing `y` / `value`                              | `INVALID_CONFIG` |
+| Missing `x` / `category` for a chart that needs it | `INVALID_CONFIG` |
+| Array input without `columns`                      | `INVALID_DATA`   |
+| Unknown field referenced by `x`, `y` or `series`   | `INVALID_CONFIG` |
+| Export before render                               | `EXPORT_FAILED`  |
+
+All are `NumvizError` instances with a stable `code`.
+
+## Next steps
+
+- [Tables](/numviz/docs/tables)
+- [Dashboard composition](/numviz/docs/dashboards)
+- [API reference](/numviz/docs/api)

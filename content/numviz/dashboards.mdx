@@ -1,0 +1,346 @@
+---
+title: Dashboards
+description: Compose charts, tables, metrics and content into a responsive grid with filters, cross-filtering, state and export.
+related:
+  - /numviz/docs/metrics
+  - /numviz/docs/export
+---
+
+`createDashboard(config)` builds a responsive grid of widgets. Every widget carries its own
+data; a dashboard never assumes the widgets share a dataset.
+
+```ts
+import { createDashboard } from '@munachi-me/numviz';
+
+const dashboard = createDashboard({
+  title: 'Sales Analytics',
+  description: 'Business performance overview',
+  format: { locale: 'en-US', currency: 'USD' },
+  layout: { columns: { base: 1, sm: 2, lg: 4 }, gap: 16, align: 'stretch' },
+  components: [
+    {
+      id: 'revenue',
+      type: 'metric',
+      name: 'Total Revenue',
+      data: revenueRows,
+      column: 'revenue',
+      aggregation: 'sum',
+      format: 'currency',
+    },
+    {
+      id: 'sales',
+      type: 'chart',
+      chartType: 'bar',
+      data: monthlyRows,
+      x: 'month',
+      y: 'revenue',
+      layout: { columnSpan: 2 },
+    },
+    { id: 'records', type: 'table', data: employeeRows, layout: { columnSpan: 2 } },
+  ],
+});
+
+dashboard.render('#dashboard');
+```
+
+## Components
+
+| `type`          | Required fields            | Notes                                                                    |
+| --------------- | -------------------------- | ------------------------------------------------------------------------ |
+| `"chart"`       | `chartType`, chart options | Accepts every `ChartConfig` field except `type`                          |
+| `"table"`       | `data`                     | Accepts every `TableConfig` field                                        |
+| `"metric"`      | `data`                     | Accepts every `MetricConfig` field except `name`, which is optional here |
+| `"heading"`     | `text`                     | `level` from 1 to 6, default 2                                           |
+| `"text"`        | `text`                     | Plain paragraph                                                          |
+| `"description"` | `text`                     | Muted supporting text                                                    |
+| `"divider"`     | —                          | Horizontal rule                                                          |
+| `"image"`       | `src`, `alt`               | `fit` is `"cover"` or `"contain"`, plus optional `caption`               |
+| `"custom"`      | `render`                   | Returns a DOM node, plain text or `null`                                 |
+
+Every component also accepts `id`, `title`, `ariaLabel`, `layout`, `style`, `visible` and
+`crossFilter`.
+
+### Custom components
+
+```ts
+{
+  id: "sparkline",
+  type: "custom",
+  render: ({ document, dashboard, component }) => {
+    const span = document.createElement("span");
+    span.textContent = "Rendered by my code";
+    return span;
+  },
+  destroy: () => {
+    /* optional cleanup */
+  },
+}
+```
+
+Returned strings are inserted as text, never parsed as HTML. Custom components cannot be
+serialized, so a dashboard containing one cannot be exported (see
+[Reports and export](/numviz/docs/export)).
+
+## Layout
+
+```ts
+interface DashboardLayout {
+  columns?: { base?: number; sm?: number; md?: number; lg?: number; xl?: number };
+  breakpoints?: { sm?: number; md?: number; lg?: number; xl?: number };
+  gap?: string;
+  rowGap?: string;
+  padding?: string;
+  rows?: string;
+  autoRows?: string;
+  align?: 'start' | 'center' | 'end' | 'stretch';
+  variant?: 'default' | 'compact' | 'flush';
+}
+```
+
+Defaults:
+
+| Field         | Default                                    |
+| ------------- | ------------------------------------------ |
+| `columns`     | `{ base: 1, sm: 2, md: 2, lg: 3, xl: 4 }`  |
+| `breakpoints` | `{ sm: 640, md: 768, lg: 1024, xl: 1280 }` |
+| `gap`         | `"16px"`                                   |
+| `rowGap`      | `"16px"`                                   |
+| `padding`     | `"0px"`                                    |
+| `align`       | `"stretch"`                                |
+| `variant`     | `"default"`                                |
+
+### Widget placement
+
+```ts
+interface DashboardComponentLayout {
+  column?: number; // one-based
+  row?: number; // one-based
+  columnSpan?: number;
+  rowSpan?: number;
+  order?: number;
+  width?: number | string;
+  height?: number | string;
+  minWidth?: number | string;
+  minHeight?: number | string;
+  align?: 'start' | 'center' | 'end' | 'stretch';
+}
+```
+
+Column spans are clamped to the active breakpoint, so a wide widget cannot create implicit
+columns on a narrow screen.
+
+### Widget style
+
+```ts
+{
+  background?: string;
+  border?: string;
+  borderRadius?: number | string;
+  padding?: number | string;
+  boxShadow?: "none" | "sm" | "md" | "lg";
+  className?: string;
+}
+```
+
+Layout and visual style are separate: `layout` never changes colours, `style` never changes
+grid placement.
+
+## Theme inheritance
+
+```ts
+createDashboard({
+  theme: { mode: 'dark', accent: '#16A34A' },
+  widgetStyle: { borderRadius: 4, boxShadow: 'sm' },
+  components: [
+    { id: 'a', type: 'metric', name: 'A', data, column: 'v', aggregation: 'sum' },
+    {
+      id: 'b',
+      type: 'metric',
+      name: 'B',
+      data,
+      column: 'v',
+      aggregation: 'sum',
+      theme: { mode: 'light' },
+    },
+  ],
+});
+```
+
+Theme tokens flow into each widget unless the widget overrides them. `format.locale` and
+`format.currency` fill in metric and table defaults the widget does not specify.
+
+## Header and footer
+
+```ts
+createDashboard({
+  header: { title: 'Sales', description: 'Q4', logo: '/logo.svg' },
+  footer: { text: 'Generated by Numviz' },
+  components,
+});
+```
+
+`header` and `footer` also accept a string, and `false` hides either. Setting `title` or
+`description` creates a header automatically; without them the resolved `header` is `null`.
+
+## Filters
+
+```ts
+createDashboard({
+  filters: [
+    { id: 'region', type: 'select', field: 'region', label: 'Region', placeholder: 'All regions' },
+    { id: 'account', type: 'search', field: 'account', label: 'Account' },
+    { id: 'revenue', type: 'number-range', field: 'revenue', label: 'Revenue', targets: ['total'] },
+  ],
+  components,
+});
+```
+
+| `type`           | Value                                                |
+| ---------------- | ---------------------------------------------------- |
+| `"select"`       | One value; set `multi: true` for several             |
+| `"multi-select"` | Several values                                       |
+| `"search"`       | Substring match                                      |
+| `"date-range"`   | `{ from, to }`                                       |
+| `"number-range"` | `{ from, to }`, with optional `min`, `max`, `step`   |
+| `"custom"`       | A `render` callback and optional `matches` predicate |
+
+A filter targets every widget containing its `field`, or only the ids in `targets`.
+Select options are derived from the connected component data unless you supply `options`
+yourself.
+
+```ts
+filters: [
+  {
+    id: 'region',
+    type: 'select',
+    field: 'region',
+    options: [
+      { label: 'North', value: 'North' },
+      { label: 'South', value: 'South' },
+    ],
+  },
+];
+```
+
+```ts
+interface DashboardCustomFilter {
+  readonly id: string;
+  readonly type: 'custom';
+  readonly field?: string;
+  readonly label?: string;
+  readonly targets?: readonly string[];
+  readonly defaultValue?: DashboardFilterValue;
+  readonly render: (context: DashboardFilterRenderContext) => Node | string | null;
+  readonly matches?: (row: DashboardFilterRowContext, value: DashboardFilterValue) => boolean;
+}
+```
+
+## Cross-filtering
+
+Add `crossFilter` to a chart or table. Clicking a chart mark or selecting table rows filters
+the connected widgets.
+
+```ts
+{
+  id: "chart",
+  type: "chart",
+  chartType: "bar",
+  data: rows,
+  x: "region",
+  y: "revenue",
+  crossFilter: { field: "region", includeSelf: false },
+}
+```
+
+| `DashboardCrossFilterConfig` field | Default                                          |
+| ---------------------------------- | ------------------------------------------------ |
+| `field`                            | The chart's X field, or the table's first column |
+| `targets`                          | Every compatible widget except the source        |
+| `includeSelf`                      | `false`                                          |
+
+A cross-filter appears in `getState().filters` under the id `crossfilter:<widgetId>`.
+
+## State and events
+
+```ts
+dashboard.on('filterchange', ({ id, value, filters, source }) => {});
+dashboard.on('selectionchange', ({ id, indices }) => {});
+dashboard.on('widgetclick', ({ id, event }) => {});
+dashboard.on('statechange', ({ state }) => {});
+
+const saved = dashboard.getState();
+dashboard.setState(saved);
+```
+
+`on()` returns an unsubscribe function; `off()` removes a listener explicitly.
+
+```ts
+interface DashboardState {
+  readonly filters: Readonly<Record<string, DashboardFilterValue>>;
+  readonly selections: Readonly<Record<string, readonly number[]>>;
+  readonly visibleComponents: Readonly<Record<string, boolean>>;
+  readonly crossFilters?: Readonly<
+    Record<
+      string,
+      {
+        readonly id: string;
+        readonly source: string;
+        readonly field: string;
+        readonly value: DashboardFilterValue;
+      }
+    >
+  >;
+}
+```
+
+`setState()` accepts a partial state.
+
+### Direct control
+
+| Method                              | Description                                           |
+| ----------------------------------- | ----------------------------------------------------- |
+| `setFilter(id, value)`              | Replace one filter value and update connected widgets |
+| `clearFilter(id)`                   | Clear one filter                                      |
+| `clearFilters()`                    | Clear every filter, including cross-filters           |
+| `getFilter(id)`                     | Current value, or `null`                              |
+| `setSelection(id, indices, emit?)`  | Replace a widget's selection                          |
+| `getSelection(id)`                  | Current selection indices                             |
+| `setComponentVisible(id, visible)`  | Show or hide a widget                                 |
+| `getWidget(id)`                     | The widget handle, or `null`                          |
+| `setWidgetData(id, data, columns?)` | Replace one widget's data in place                    |
+| `updateWidget(id, patch)`           | Merge a partial component configuration               |
+
+## Lifecycle
+
+| Method            | Description                                           |
+| ----------------- | ----------------------------------------------------- |
+| `render(target)`  | Render the grid into a selector or element            |
+| `update(config)`  | Reconcile widgets by id, preserving table state       |
+| `refresh()`       | Recompute and re-render against current configuration |
+| `print(options?)` | Apply print options and open the browser print dialog |
+| `export(options)` | Write a standalone HTML dashboard (Node.js only)      |
+| `destroy()`       | Destroy every widget and remove the DOM               |
+
+`update()` keeps table state, recomputes metrics and destroys widgets that no longer exist.
+
+```ts
+dashboard.print({ hideFilters: true, pageBreak: 'avoid' });
+```
+
+`print()` requires a rendered dashboard and calls `window.print()`. The default print options
+are `{ hideFilters: true, pageBreak: "avoid" }`. Pass `print: false` in the config to remove
+the print configuration; `print()` itself still calls `window.print()`.
+
+## Accessibility
+
+- Headings are real `h1`–`h6` elements, so the dashboard has a navigable outline.
+- Filter controls are labelled and keyboard reachable.
+- Widgets are grouped with accessible names from `title` or `ariaLabel`.
+- Charts expose an accessible name and a text summary; tables use native semantics.
+- Print styles hide filter controls and table toolbars.
+
+## Next steps
+
+- [Reports and export](/numviz/docs/export)
+- [React and Next.js](/numviz/docs/react)
+- [API reference](/numviz/docs/api)

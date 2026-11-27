@@ -1,0 +1,240 @@
+---
+title: Window functions and time series
+description: Rank rows, read neighbours, accumulate and roll within partitions, then bucket a series by calendar period.
+related:
+  - /numiq/docs/joins
+  - /numiq/docs/pipelines
+  - /numiq/docs/api/operations
+---
+
+A window value depends on a row's position among its neighbours, so every window call
+requires an explicit `orderBy`. Passing the order in means sorting the dataset first cannot
+change the answer: the same `orderBy` always produces the same result.
+
+```ts
+const orders = createDataset([
+  { store: 'A', at: '2026-11-01', units: 5 },
+  { store: 'A', at: '2026-11-02', units: 3 },
+  { store: 'A', at: '2026-11-03', units: 8 },
+  { store: 'B', at: '2026-11-01', units: 2 },
+  { store: 'B', at: '2026-11-02', units: 9 },
+]);
+
+const ranked = orders
+  .rank('rank', { partitionBy: 'store', orderBy: { column: 'units', direction: 'desc' } })
+  .cumSum('running', 'units', { partitionBy: 'store', orderBy: 'at' })
+  .rollingMean('avg3', 'units', { partitionBy: 'store', orderBy: 'at', window: 3 });
+```
+
+## Ordering and partitioning
+
+| Option        | Meaning                                                                    |
+| ------------- | -------------------------------------------------------------------------- |
+| `orderBy`     | Required. A column name, or `{ column, direction }`, or an array of either |
+| `partitionBy` | Optional. One column or an array; each partition is computed independently |
+
+Missing ordering values sort last in both directions, matching `sort()`. Ties keep their
+input order, so results are stable and reproducible. A window never crosses a partition
+boundary: `lag` on the first row of a partition returns `fill`, not the previous partition's
+last value.
+
+## Numbering and ranking
+
+| Method                     | Behaviour                                        |
+| -------------------------- | ------------------------------------------------ |
+| `rowNumber(name, options)` | 1..n within each partition; always distinct      |
+| `rank(name, options)`      | Leaves a gap after a tie                         |
+| `denseRank(name, options)` | No gap after a tie                               |
+| `rankRows(options)`        | Returns `{ index, rank }[]` instead of a dataset |
+
+```ts
+orders.rowNumber('rn', { partitionBy: 'store', orderBy: 'at' });
+// A: 1, 2, 3 — B: 1, 2
+
+orders.rank('rk', { partitionBy: 'store', orderBy: { column: 'units', direction: 'desc' } });
+// A: 2, 3, 1 — B: 2, 1
+
+orders.denseRank('dr', { orderBy: 'units' });
+// units 5 → 3, 3 → 2, 8 → 4, 2 → 1, 9 → 5
+```
+
+`rankRows()` is for when you need the ranking without appending a column:
+
+```ts
+orders.rankRows({ orderBy: { column: 'units', direction: 'desc' } });
+// [{ index: 4, rank: 1 }, { index: 2, rank: 2 }, ...]
+```
+
+## Neighbour values
+
+`lag` and `lead` read a neighbour's value at an explicit `offset`, falling back to `fill`
+(default `null`) where no such row exists:
+
+```ts
+orders.sortByTime('at').lag('prev', 'units', { partitionBy: 'store', orderBy: 'at' });
+// first row of each partition: prev = null
+
+orders.sortByTime('at').lead('next', 'units', {
+  partitionBy: 'store',
+  orderBy: 'at',
+  offset: 1,
+  fill: -1,
+});
+// last row of each partition: next = -1
+```
+
+## Cumulative values
+
+`cumSum` and `cumMean` accumulate in partition order:
+
+```ts
+orders.sortByTime('at').cumSum('run', 'units', { partitionBy: 'store', orderBy: 'at' });
+// A: 5, 8, 16 — B: 2, 11
+
+orders.sortByTime('at').cumMean('cm', 'units', { partitionBy: 'store', orderBy: 'at' });
+// A: 5, 4, 5.333333333333333 — B: 2, 5.5
+```
+
+Both accept `ignoreMissing` (default `false`). By default a missing value stops the
+accumulation: that row and every later row in the partition emit `null`, so a gap is visible
+instead of being silently treated as zero. With `ignoreMissing: true` the missing row keeps
+the running total and accumulation continues.
+
+## Rolling values
+
+`rollingSum`, `rollingMean`, `rollingMin`, `rollingMax` and `rollingStd` use a trailing
+window that ends at the current row.
+
+| Option          | Default  | Meaning                                        |
+| --------------- | -------- | ---------------------------------------------- |
+| `window`        | required | Number of rows in the window                   |
+| `minPeriods`    | `window` | Minimum observations before a value is emitted |
+| `ignoreMissing` | `false`  | Skip missing values instead of failing         |
+
+```ts
+orders.sortByTime('at').rollingMean('avg3', 'units', {
+  partitionBy: 'store',
+  orderBy: 'at',
+  window: 3,
+});
+// A: null, null, 5.333333333333333 — B: null, null
+```
+
+By default a row with fewer than `window` predecessors emits `null` rather than an average
+of fewer rows than asked for. Lower `minPeriods` to accept a short leading window:
+
+```ts
+orders.sortByTime('at').rollingMean('avg3', 'units', {
+  partitionBy: 'store',
+  orderBy: 'at',
+  window: 3,
+  minPeriods: 1,
+});
+// A: 5, 4, 5.333333333333333 — B: 2, 5.5
+```
+
+`rollingStd` uses the sample divisor `n - 1`, consistent with `std`, so a window holding one
+observation emits `null`.
+
+## Custom window functions
+
+`window(name, { orderBy, partitionBy?, fn })` runs your function once per row with the full
+partition available:
+
+```ts
+orders.window('maxUnits', {
+  orderBy: 'at',
+  fn: (context) => Math.max(...context.rows.map((row) => Number(row.units))),
+});
+// 9, 9, 9, 9, 9 — the maximum across the whole partition
+```
+
+The context carries `rowNumber`, `index`, `row`, `partition` and `rows`.
+
+<Callout type="info" title="Results are appended, never overwritten">
+  Window results are appended to the existing columns and the input row order is preserved, even
+  though the computation follows `orderBy`. Naming a column that already exists throws
+  `ValidationError`.
+</Callout>
+
+## Time series
+
+### Sorting by time
+
+```ts
+orders.sortByTime('at'); // oldest first
+orders.sortByTime('at', { direction: 'desc' });
+```
+
+Missing times sort last in both directions. A present but unparseable time throws.
+
+### Extracting a period
+
+```ts
+orders.extractPeriod('week', 'at', 'week');
+// week: "2026-10-26", "2026-11-02", ...
+```
+
+`periodBuckets(timeColumn, interval)` returns the distinct bucket labels in first-appearance
+order, without adding a column.
+
+### Resampling
+
+`resample()` groups rows into fixed calendar buckets and aggregates each one:
+
+```ts
+const daily = orders.resample({
+  every: 'day',
+  timeColumn: 'at',
+  aggregate: { units: 'sum', store: 'count' },
+});
+
+daily.data;
+// [
+//   { period: "2026-11-01", units: 7, store: 2 },
+//   { period: "2026-11-02", units: 12, store: 2 },
+//   { period: "2026-11-03", units: 8, store: 1 }
+// ]
+```
+
+| Option          | Default    | Meaning                                                             |
+| --------------- | ---------- | ------------------------------------------------------------------- |
+| `every`         | required   | `"hour"`, `"day"`, `"week"`, `"month"`, `"quarter"` or `"year"`     |
+| `timeColumn`    | required   | Column holding the time value                                       |
+| `aggregate`     | required   | `{ outputColumn: aggregation }`                                     |
+| `label`         | `"period"` | Name of the bucket column                                           |
+| `onMissingTime` | `"drop"`   | `"drop"` counts and skips rows with no time; `"error"` rejects them |
+
+Aggregations are `sum`, `mean`, `median`, `min`, `max`, `count`, `first` and `last`.
+
+Weeks start on Monday and quarters on the first day of months 1, 4, 7 and 10. All calendar
+arithmetic is UTC: a `Date` is an instant, so bucketing in local time would move rows between
+buckets depending on where the code runs. Zone offsets in an input string are honoured, so
+`2026-11-16T10:00:00+02:00` buckets as `08:00Z`.
+
+`resample()` emits one row per non-empty bucket in ascending order. It does not invent a row
+for an empty period: a zero row would assert something the input never said.
+
+`resampleReport()` adds the counts:
+
+```ts
+const { dataset, bucketed, dropped } = orders.resampleReport({
+  every: 'week',
+  timeColumn: 'at',
+  aggregate: { units: 'sum' },
+});
+// bucketed: 5 (rows placed in a bucket), dropped: 0 (rows with no time)
+```
+
+### Time helpers
+
+| Function                       | Returns                                            |
+| ------------------------------ | -------------------------------------------------- |
+| `toTime(value, context)`       | A `Date` or `null`; throws on an unparseable value |
+| `periodStart(date, interval)`  | The first instant of the bucket                    |
+| `periodLabel(start, interval)` | The bucket label, e.g. `"2026-11-02"`              |
+
+## Next steps
+
+- [Pipelines and validation](/numiq/docs/pipelines)
+- [API reference: operations](/numiq/docs/api/operations)

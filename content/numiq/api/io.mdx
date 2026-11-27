@@ -1,0 +1,390 @@
+---
+title: I/O reference
+description: Loaders, parsers, normalization, interchange, chunked reading and table rendering.
+related:
+  - /numiq/docs/data-loading
+  - /numiq/docs/api/datasets
+---
+
+## Sources
+
+```ts
+type Source = string | URL | Blob | ArrayBuffer | Uint8Array;
+
+type ImportFormat = 'csv' | 'tsv' | 'json';
+type DelimitedFormat = Extract<ImportFormat, 'csv' | 'tsv'>;
+```
+
+A `string` is a local filename when the Node entry is active, or an `http(s)` URL in any
+entry. A `URL` object must use `http:` or `https:`.
+
+```ts
+interface LoadOptions {
+  name?: string;
+  metadata?: Record<string, unknown>;
+  signal?: AbortSignal;
+  headers?: Record<string, string>;
+  timeoutMs?: number; // default 30000, URLs only
+  datasetDir?: string; // default process.cwd(), local files only
+}
+
+interface CsvOptions {
+  delimiter?: string; // default: detected
+  header?: boolean; // default true
+  columns?: readonly string[];
+  skipRows?: number; // default 0
+  schema?: Record<string, ColumnType | ColumnTypeSpec>;
+  onInvalid?: 'error' | 'null'; // default "error"
+  onRaggedRow?: 'error' | 'pad'; // default "error"
+  normalization?: Partial<NormalizationPolicy>;
+}
+
+interface JsonOptions {
+  columns?: readonly string[];
+  skipRows?: number;
+  schema?: Record<string, ColumnType | ColumnTypeSpec>;
+  onInvalid?: 'error' | 'null';
+  normalization?: Partial<NormalizationPolicy>;
+}
+
+interface FormatOptions {
+  format?: ImportFormat;
+  contentType?: string;
+}
+```
+
+## Loading
+
+### `loadCSV`
+
+```ts
+function loadCSV(source: Source, options?: LoadOptions & CsvOptions): Promise<Dataset>;
+```
+
+Reads CSV from a local file, URL, `Blob` or byte buffer. In the browser-safe entry a local
+filename throws `EnvironmentError`.
+
+```ts
+const data = await loadCSV('sales.csv', { schema: { amount: 'number' } });
+```
+
+Throws `ImportError` when the source cannot be read, `FormatError` when a `File` name
+declares another format, `ValidationError` for a rejected local path, and `EnvironmentError`
+in a browser.
+
+### `loadTSV`
+
+```ts
+function loadTSV(source: Source, options?: LoadOptions & CsvOptions): Promise<Dataset>;
+```
+
+Identical to `loadCSV`, with the tab as the default delimiter.
+
+### `loadJSON`
+
+```ts
+function loadJSON(source: Source, options?: LoadOptions & JsonOptions): Promise<Dataset>;
+```
+
+Accepts an array of records, an array of arrays with `columns`, or a column-oriented object
+of parallel arrays.
+
+### `loadURL`
+
+```ts
+function loadURL(
+  url: string | URL,
+  options?: LoadOptions & FormatOptions & CsvOptions & JsonOptions,
+): Promise<Dataset>;
+```
+
+Fetches over HTTP(S) and resolves the format from `format`, then the URL extension, then the
+`content-type` header. If none identifies a supported format it throws `FormatError` rather
+than guessing. A non-2xx response throws `ImportError` with `status` and `source`.
+
+```ts
+const data = await loadURL('https://example.com/sales.csv', { timeoutMs: 10_000 });
+```
+
+### `useSampleDataset`
+
+```ts
+function useSampleDataset(): Promise<Dataset>;
+```
+
+Returns the bundled 50-row sales dataset (`shape` `[50, 7]`, name `sample-sales`). Identical
+on every call, in both environments.
+
+## Parsing text
+
+### `parseDelimited`
+
+```ts
+function parseDelimited(
+  text: string,
+  options: CsvOptions &
+    LoadOptions & {
+      format: DelimitedFormat;
+      source?: string;
+      contentType?: string;
+    },
+): Dataset;
+```
+
+Synchronous. `format` is required and must be `"csv"` or `"tsv"`; anything else throws
+`ValidationError`.
+
+```ts
+parseDelimited('a,b\n1,2\n', { format: 'csv' }).data; // [{ a: 1, b: 2 }]
+```
+
+### `parseJSON`
+
+```ts
+function parseJSON(
+  input: string | unknown,
+  options?: JsonOptions & LoadOptions & { source?: string; contentType?: string },
+): Dataset;
+```
+
+Synchronous. A string is parsed as JSON (invalid text throws `FormatError`); any other value
+is shaped directly. Supported shapes are an array of records, an array of arrays with
+`columns`, or a column-oriented object.
+
+### `detectDelimiter`
+
+```ts
+function detectDelimiter(text: string, sampleLines?: number, skipLines?: number): string;
+```
+
+Returns the delimiter that best fits several sampled lines. Sampling more than one line
+prevents a preamble from misleading detection.
+
+### `tokenize`
+
+```ts
+function tokenize(text: string, delimiter: string): string[][];
+```
+
+Splits delimited text into raw cell rows following RFC 4180 quoting rules, without building
+a dataset.
+
+## Normalization
+
+### `DEFAULT_NORMALIZATION`
+
+```ts
+const DEFAULT_NORMALIZATION: Readonly<NormalizationPolicy>;
+// { trimStrings: false, emptyStringAsNull: true, inferTypes: true, nullValues: [""] }
+```
+
+### `resolveNormalization`
+
+```ts
+function resolveNormalization(
+  partial: Partial<NormalizationPolicy> | undefined,
+): NormalizationPolicy;
+```
+
+Merges an override over `DEFAULT_NORMALIZATION` and returns a complete policy. Every import
+report records the resolved policy it used.
+
+### `normalizeCell`
+
+```ts
+interface NormalizedCell {
+  value: unknown;
+  issue?: 'unsafe-integer';
+}
+
+function normalizeCell(input: unknown, policy: NormalizationPolicy): NormalizedCell;
+```
+
+Applies the policy to one raw cell. An integer beyond `Number.MAX_SAFE_INTEGER` is returned
+as its original string with `issue: "unsafe-integer"`.
+
+## Interchange
+
+### `toTableData`
+
+```ts
+interface TableData {
+  readonly columns: readonly string[];
+  readonly rows: readonly (readonly unknown[])[];
+}
+
+function toTableData(dataset: Dataset): TableData;
+```
+
+Header plus row-major cells.
+
+### `toObjects`
+
+```ts
+function toObjects(dataset: Dataset): Record<string, unknown>[];
+```
+
+Plain records, one per row.
+
+### `fromTableData`
+
+```ts
+function fromTableData(table: TableData, options?: { name?: string; strict?: boolean }): Dataset;
+```
+
+Rebuilds a dataset from header-plus-cells. `strict` rejects rows whose width differs from
+the header.
+
+### `toCSV`
+
+```ts
+interface ToCsvOptions {
+  readonly delimiter?: string;
+  readonly newline?: string;
+  readonly header?: boolean;
+}
+
+function toCSV(dataset: Dataset, options?: ToCsvOptions): string;
+```
+
+Renders CSV text. Values are quoted when they contain the delimiter, a quote or a newline.
+There is no trailing newline.
+
+### `toInterchange`
+
+```ts
+interface ColumnDescriptor {
+  readonly name: string;
+  readonly type: DType;
+  readonly nullable: boolean;
+  readonly role: 'measure' | 'dimension' | 'temporal';
+}
+
+interface InterchangePayload {
+  readonly format: 'numiq.table';
+  readonly version: 1;
+  readonly name: string;
+  readonly columns: readonly ColumnDescriptor[];
+  readonly rows: readonly (readonly unknown[])[];
+  readonly rowCount: number;
+  readonly columnCount: number;
+  readonly missingValue: null;
+  readonly metadata: Readonly<Record<string, unknown>>;
+}
+
+function toInterchange(dataset: Dataset): InterchangePayload;
+```
+
+The documented contract a consumer such as Numviz reads. Every missing value is `null` —
+never `undefined` or `NaN`.
+
+### `isInterchangePayload`
+
+```ts
+function isInterchangePayload(value: unknown): value is InterchangePayload;
+```
+
+Validates the shape before you read it.
+
+### `fromInterchange`
+
+```ts
+function fromInterchange(payload: InterchangePayload): Dataset;
+```
+
+Rebuilds a dataset from a payload.
+
+### `columnRole`
+
+```ts
+function columnRole(type: DType): ColumnDescriptor['role'];
+```
+
+Maps a dtype to `"measure"`, `"dimension"` or `"temporal"`.
+
+## Chunked reading
+
+```ts
+interface ChunkProgress {
+  readonly chunk: number;
+  readonly rows: number;
+  readonly delivered: number;
+  readonly lastRecord: number;
+}
+
+interface ChunkOptions extends CsvOptions {
+  readonly chunkSize?: number;
+  readonly onProgress?: (progress: ChunkProgress) => void | boolean;
+  readonly signal?: AbortSignal;
+}
+```
+
+### `chunkDelimited`
+
+```ts
+function chunkDelimited(
+  text: string,
+  format: DelimitedFormat,
+  options?: ChunkOptions,
+): Generator<Dataset, void, undefined>;
+```
+
+Lazily yields complete datasets of at most `chunkSize` rows. Returning `false` from
+`onProgress` stops the iteration, as does an aborted `signal`. Splitting happens after
+tokenizing, so a newline inside a quoted field never splits a record.
+
+### `reduceChunks`
+
+```ts
+function reduceChunks<T>(
+  text: string,
+  format: DelimitedFormat,
+  step: (accumulator: T, chunk: Dataset, progress: ChunkProgress) => T,
+  initial: T,
+  options?: ChunkOptions,
+): T;
+```
+
+Folds each chunk and drops it, for running totals over data too large to keep.
+
+### `collectChunks`
+
+```ts
+function collectChunks(text: string, format: DelimitedFormat, options?: ChunkOptions): Dataset;
+```
+
+Concatenates every chunk into one dataset.
+
+## Table rendering
+
+### `renderTable`
+
+```ts
+function renderTable(
+  rows: readonly Row[],
+  columns: readonly string[],
+  options?: TableOptions,
+): string;
+```
+
+The standalone box-drawing renderer behind `Dataset.table()`. Only visible rows are
+formatted, so cost is bounded by `maxRows` and `maxColumns`, not by dataset size.
+
+```ts
+console.log(renderTable([{ a: 1 }], ['a']));
+```
+
+```text
+┌─────┬───┐
+│ idx │ a │
+├─────┼───┤
+│ 0   │ 1 │
+└─────┴───┘
+Showing 1 of 1 rows.
+1 rows × 1 columns
+```
+
+## Next
+
+- [Datasets](/numiq/docs/api/datasets)
+- [Query and aggregation](/numiq/docs/api/query)

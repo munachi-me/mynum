@@ -1,0 +1,307 @@
+---
+title: Tables
+description: Accessible HTML tables with columns, formatting, sorting, search, pagination, selection, states and CSV, JSON and HTML export.
+related:
+  - /numviz/docs/charts
+  - /numviz/docs/api
+---
+
+`createTable(config)` renders a real `table` element with `thead`, `tbody`, `th` and `td`.
+Only the visible page is written to the DOM, so a large dataset costs the same as a small
+one.
+
+```ts
+import { createTable } from '@munachi-me/numviz';
+
+const table = createTable({
+  data: employees,
+  title: 'Employees',
+  sortable: true,
+  searchable: true,
+  pagination: true,
+  pageSize: 10,
+  rowNumbers: true,
+  selectable: true,
+  columns: [
+    { field: 'name', label: 'Employee', width: 220 },
+    { field: 'department', label: 'Department' },
+    { field: 'salary', label: 'Salary', format: 'currency', currency: 'USD' },
+    { field: 'joined', label: 'Joined', format: 'date' },
+  ],
+});
+
+table.render('#table');
+```
+
+## Defaults
+
+| Option              | Default                |
+| ------------------- | ---------------------- |
+| `sortable`          | `true`                 |
+| `searchable`        | `false`                |
+| `pagination`        | `false`                |
+| `pageSize`          | `10`                   |
+| `pageSizeOptions`   | `[10, 25, 50, 100]`    |
+| `rowNumbers`        | `false`                |
+| `selectable`        | `false`                |
+| `striped`           | `false`                |
+| `stickyHeader`      | `true`                 |
+| `responsive`        | `true`                 |
+| `variant`           | `"minimal"`            |
+| `locale`            | `"en-US"`              |
+| `searchPlaceholder` | `"Search…"`            |
+| `emptyMessage`      | `"No data to display"` |
+| `noResultsMessage`  | `"No matching rows"`   |
+| `loadingMessage`    | `"Loading…"`           |
+
+## Columns
+
+A column is a field name or a `TableColumnConfig`:
+
+```ts
+interface TableColumnConfig {
+  field?: string; // optional for computed columns that only render
+  key?: string; // alias for field
+  label?: string;
+  type?: 'number' | 'date' | 'string' | 'boolean';
+  visible?: boolean;
+  width?: number | string;
+  align?: 'left' | 'center' | 'right';
+  format?: 'text' | 'number' | 'currency' | 'percent' | 'date' | TableFormatter;
+  formatOptions?: Intl.NumberFormatOptions | Intl.DateTimeFormatOptions;
+  currency?: string;
+  render?: (row: TableRow, context: TableCellContext) => Node | string | number | bigint | null;
+  value?: (row: TableRow) => unknown;
+  sortable?: boolean;
+  searchable?: boolean;
+  className?: string;
+  headerClassName?: string;
+}
+```
+
+Detected columns get sensible defaults: numeric fields align right and format as numbers,
+string fields align left, and every detected column is sortable and searchable.
+
+### Formatting
+
+```ts
+const table = createTable({
+  data: rows,
+  columns: [
+    { field: 'revenue', format: 'currency', currency: 'USD' },
+    { field: 'margin', format: 'percent' },
+    { field: 'joined', format: 'date' },
+    { field: 'score', format: (value) => `${Number(value).toFixed(1)} pts` },
+  ],
+});
+```
+
+| Preset       | Example output |
+| ------------ | -------------- |
+| `"text"`     | `North`        |
+| `"number"`   | `41,000`       |
+| `"currency"` | `$41,000.00`   |
+| `"percent"`  | `12.5%`        |
+| `"date"`     | `Apr 1, 2021`  |
+
+`formatOptions` is passed to `Intl.NumberFormat` or `Intl.DateTimeFormat`. A custom
+`TableFormatter` receives `(value, row, column)` and returns a string.
+
+### Computed columns
+
+```ts
+createTable({
+  data: rows,
+  columns: [
+    { field: 'name', label: 'Name' },
+    {
+      label: 'Status',
+      value: (row) => (row.active ? 'Active' : 'Inactive'),
+      render: (row) => (row.active ? 'Active' : 'Inactive'),
+    },
+  ],
+});
+```
+
+A column with no `field` is a display column. Pair `render` with `value` when the column
+must also sort, search or format: `value` supplies the data, `render` supplies the output.
+Give the column a `field` key as well if you want to sort it programmatically; sorting by a
+label that is not a field throws `INVALID_CONFIG`.
+
+### Conditional formatting
+
+A `format` function or a `render` function sees the value and the whole row, so conditional
+presentation needs no separate API:
+
+```ts
+{
+  field: "score",
+  label: "Score",
+  format: (value, row) => (Number(row.score) < 60 ? `${value} (fail)` : String(value)),
+}
+```
+
+Return a DOM node from `render` when you need markup. Strings are inserted as text, never
+parsed as HTML.
+
+## Sorting and search
+
+- Sorting is client-side, on the raw value or the `value()` accessor. `setSort(field)`
+  defaults to ascending; `setSort(field, "desc")` reverses it.
+- Search matches the configured columns only. A column that is not in `columns` is not
+  searched. Both the displayed value and the raw value match, so `41,000` and `41000` find
+  the same cell.
+- Both apply before pagination, and neither resets the current page.
+
+```ts
+table.setSort('score', 'desc');
+table.setSearch('Core');
+table.setPage(2);
+```
+
+`setSort(field, direction?, emit?)` accepts `null` as the field to clear sorting.
+`emit` defaults to `true` and controls whether `onSortChange` fires.
+
+## Pagination
+
+```ts
+createTable({
+  data: rows,
+  pagination: true,
+  pageSize: 25,
+  pageSizeOptions: [25, 50, 100],
+  onPageChange: (page) => console.log(page),
+});
+```
+
+Pages are 1-based. `pageSize` and `pageSizeOptions` only take effect when `pagination` is
+`true`; without pagination every filtered row is rendered.
+
+## Selection
+
+```ts
+const table = createTable({
+  data: rows,
+  selectable: true,
+  onSelectionChange: (indices, selectedRows) => {
+    console.log(indices, selectedRows);
+  },
+});
+
+table.setSelection([0, 3]);
+table.getSelectedRows();
+```
+
+Indices refer to positions in the current filtered, sorted data. `getSelectedRows()` returns
+the row objects.
+
+## States
+
+```ts
+table.setLoading(true); // aria-busy, loading message
+table.setError('Could not load rows'); // role="alert"
+table.setLoading(false);
+table.setError(null);
+```
+
+| State                  | What renders                         |
+| ---------------------- | ------------------------------------ |
+| Empty data             | `emptyMessage`                       |
+| Search with no matches | `noResultsMessage`                   |
+| `loading: true`        | `loadingMessage`, `aria-busy="true"` |
+| `error: "…"`           | The message with `role="alert"`      |
+
+## Lifecycle
+
+| Method                              | Description                                                                        |
+| ----------------------------------- | ---------------------------------------------------------------------------------- |
+| `render(target)`                    | Render into a selector or element                                                  |
+| `update(config)`                    | Replace the configuration and re-render                                            |
+| `setData(data, columns?)`           | Replace data, keeping sort and page when possible                                  |
+| `setSort(field, direction?, emit?)` | Sort by a field                                                                    |
+| `setPage(page, emit?)`              | Jump to a page                                                                     |
+| `setSearch(query, emit?)`           | Apply a search query                                                               |
+| `setSelection(indices, emit?)`      | Replace the selection                                                              |
+| `getSelectedRows()`                 | The selected row objects                                                           |
+| `getState()`                        | `{ sort, page, pageCount, search, selectedRows, filteredRowCount, totalRowCount }` |
+| `destroy()`                         | Remove the DOM and listeners                                                       |
+
+## Export
+
+```ts
+table.toCSV({ scope: 'all', includeHeaders: true, delimiter: ',' });
+table.toJSON({ format: 'objects', useLabels: true, pretty: true });
+table.toHTML({ includeTitle: true });
+```
+
+```ts
+interface TableExportOptions {
+  scope?: 'all' | 'page'; // default "all"
+  includeHidden?: boolean; // default false
+}
+
+interface TableCSVExportOptions extends TableExportOptions {
+  delimiter?: string; // default ","
+  includeHeaders?: boolean; // default true
+  bom?: boolean; // default false
+  lineEnding?: string; // default "\n"
+  formulaProtection?: boolean; // default true
+}
+
+interface TableJSONExportOptions extends TableExportOptions {
+  format?: 'objects' | 'matrix'; // default "objects"
+  useLabels?: boolean; // default false
+  raw?: boolean; // default false
+  includeHeaders?: boolean; // default true, matrix only
+  pretty?: boolean; // default false
+}
+
+interface TableHTMLExportOptions extends TableExportOptions {
+  includeHeaders?: boolean; // default true
+  includeTitle?: boolean; // default false
+}
+```
+
+Exports include every filtered and sorted row, using displayed labels and formatted cells.
+`raw: true` emits unformatted JSON values.
+
+### Formula protection
+
+CSV output prefixes spreadsheet formula starters with an apostrophe. That covers `=`, `+`,
+`-`, `@`, tab, carriage return and line feed, including after leading whitespace or control
+characters. Genuine negative numbers keep their numeric form.
+
+```csv
+name,score
+'=cmd,-5
+```
+
+The apostrophe is part of the payload. Disable it only for trusted, non-spreadsheet
+consumers:
+
+```ts
+table.toCSV({ formulaProtection: false });
+```
+
+## Variants and responsive behaviour
+
+`variant` is `"minimal"`, `"striped"`, `"bordered"`, `"compact"` or `"dashboard"`.
+
+With `responsive: true` the table stretches to the container and scrolls horizontally when
+its content is wider. With `responsive: false` it sizes to its content and leaves the
+remaining horizontal space to the container. `maxHeight` bounds the scroll area and works
+with `stickyHeader`.
+
+## Accessibility
+
+- Native `table`, `thead`, `tbody`, `th` and `td`, with `scope="col"` on headers.
+- `aria-sort` on the sorted column, `aria-selected` on selected rows.
+- `aria-busy` while loading, `role="alert"` for errors, and a polite live region for status.
+- Labelled search, page-size and pagination controls.
+- Keyboard-reachable sortable headers and controls.
+
+## Next steps
+
+- [Metrics and KPI cards](/numviz/docs/metrics)
+- [Dashboards](/numviz/docs/dashboards)
+- [API reference](/numviz/docs/api)

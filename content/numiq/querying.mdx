@@ -1,0 +1,177 @@
+---
+title: Querying
+description: Build typed conditions, combine them with boolean grouping, order, project and execute — without a query string.
+related:
+  - /numiq/docs/transformation
+  - /numiq/docs/grouping
+  - /numiq/docs/api/query
+---
+
+`Dataset.query()` returns a lazy builder. Conditions are typed values passed to methods, so
+there is no query string to parse and no way for data to become executable code. Nothing
+runs until `execute()`.
+
+```ts
+import { useSampleDataset } from '@munachi-me/numiq';
+
+const sales = await useSampleDataset();
+
+const result = sales
+  .query()
+  .where('revenue', '>', 500)
+  .and('region', 'in', ['North', 'West'])
+  .orderBy('revenue', 'desc')
+  .select(['order_id', 'region', 'revenue'])
+  .limit(5)
+  .execute();
+```
+
+```text
+[
+  { order_id: "ORD-1006", region: "West", revenue: 2720.94 },
+  { order_id: "ORD-1014", region: "West", revenue: 2447.83 },
+  { order_id: "ORD-1026", region: "West", revenue: 2357.25 },
+  { order_id: "ORD-1046", region: "West", revenue: 1957.64 },
+  { order_id: "ORD-1034", region: "West", revenue: 1768.68 }
+]
+```
+
+## Operators
+
+| Operator                             | Meaning                                 |
+| ------------------------------------ | --------------------------------------- |
+| `=`, `!=`, `>`, `>=`, `<`, `<=`      | Comparison, by value and type           |
+| `in`, `notIn`                        | Membership in a non-empty array         |
+| `between`                            | Inclusive range, given as `[low, high]` |
+| `contains`, `startsWith`, `endsWith` | Substring tests on text                 |
+| `isNull`, `isNotNull`                | Missing-value tests                     |
+
+`isNull` and `isNotNull` take no value. `in` and `notIn` take a non-empty array; an empty
+array throws `ValidationError`. `between` takes a two-element tuple.
+
+```ts
+sales.query().where('revenue', 'between', [100, 200]).execute(); // 11 rows
+sales.query().where('revenue', 'notIn', [48, 57]).execute(); // 48 rows
+```
+
+## Text matching
+
+`contains`, `startsWith` and `endsWith` are case-sensitive unless you pass
+`{ ignoreCase: true }`:
+
+```ts
+sales.query().where('product', 'contains', 'mouse', { ignoreCase: true }).execute();
+// 5 rows, all "Nimbus Wireless Mouse"
+```
+
+`ignoreCase` applies to the string operators only.
+
+## Combining conditions
+
+`where()` starts a condition. `and()` and `or()` extend it:
+
+| Method            | Meaning                                 |
+| ----------------- | --------------------------------------- |
+| `where(...)`      | First condition                         |
+| `and(...)`        | Conjunction with the current expression |
+| `or(...)`         | Disjunction with the current expression |
+| `andGroup(build)` | Parenthesise a group, joined with AND   |
+| `orGroup(build)`  | Parenthesise a group, joined with OR    |
+
+`and` binds tighter than `or`, so this:
+
+```ts
+sales.query().where('revenue', '>', 500).or('region', '=', 'East').and('quantity', '=', 1);
+```
+
+means `revenue > 500 OR (region = East AND quantity = 1)`, which is exactly what
+`toString()` reports:
+
+```text
+(revenue > 500 OR (region = East AND quantity = 1))
+```
+
+Use the group methods to parenthesise explicitly:
+
+```ts
+const q = sales
+  .query()
+  .where('region', '=', 'North')
+  .andGroup((group) => group.where('revenue', '>', 100).or('quantity', '=', 1));
+
+q.toString();
+// (region = North AND (revenue > 100 OR quantity = 1))
+
+q.execute().rowCount; // 12
+```
+
+## Ordering, projection and limits
+
+| Method                        | Meaning                                         |
+| ----------------------------- | ----------------------------------------------- |
+| `orderBy(column, direction?)` | Sort by a column; `"asc"` (default) or `"desc"` |
+| `select(columns)`             | Only these columns, in this order               |
+| `limit(count)`                | At most `count` rows                            |
+
+Ordering follows the same rules as `Dataset.sort()`: missing values last in both
+directions, numbers and dates compared numerically, everything else as text, ties in
+original order.
+
+## Missing values in conditions
+
+A missing cell never satisfies a comparison, including `!=` and `notIn`. This matches SQL:
+an unknown value cannot be shown to differ from anything.
+
+```ts
+// Rows with no region are not returned
+sales.query().where('region', '!=', 'North').execute();
+
+// Include them explicitly
+sales.query().where('region', '!=', 'North').or('region', 'isNull').execute();
+```
+
+## Inspecting a query
+
+`toString()` renders the condition tree as text. It is meant for logging and debugging, not
+for re-parsing: Numiq has no parser for it.
+
+```ts
+sales.query().where('revenue', '>', 500).and('region', 'in', ['North', 'West']).toString();
+// (revenue > 500 AND region in [2 values])
+```
+
+## Immutability
+
+Every builder step returns a new `Query`, so a partially built query is safe to reuse as a
+starting point:
+
+```ts
+const base = sales.query().where('region', '=', 'North');
+
+const cheap = base.and('revenue', '<', 100).execute();
+const expensive = base.and('revenue', '>', 1000).execute();
+
+// base is unchanged and still has only the region condition
+```
+
+`execute()` returns a new `Dataset` and never modifies the source.
+
+## Errors
+
+| Situation                                          | Error                 |
+| -------------------------------------------------- | --------------------- |
+| Unknown column in a condition, order, or selection | `ColumnNotFoundError` |
+| Empty array for `in` / `notIn`                     | `ValidationError`     |
+| Malformed `between` tuple                          | `ValidationError`     |
+| Unsupported operator                               | `ValidationError`     |
+
+<Callout type="info" title="When to use query() instead of filter()">
+  Use `filter()` for a one-off predicate that needs JavaScript logic. Use `query()` when the
+  conditions are data — when you build them from user input, log them, or reuse a base query across
+  branches.
+</Callout>
+
+## Next steps
+
+- [Grouping and aggregation](/numiq/docs/grouping)
+- [API reference: Query](/numiq/docs/api/query)

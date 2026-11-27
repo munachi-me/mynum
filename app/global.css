@@ -1,0 +1,212 @@
+@import 'tailwindcss';
+@import 'fumadocs-ui/css/neutral.css';
+@import 'fumadocs-ui/css/preset.css';
+
+/*
+ * Design tokens.
+ *
+ * Brand neutrals are fixed. The product accent is exposed twice:
+ *   --product-accent  exact brand colour, for fills and decoration
+ *   --product-link    contrast-safe accent, for text on the current surface
+ * Fumadocs components read --color-fd-primary, which is bound to the
+ * contrast-safe value so links, active items and focus rings stay legible.
+ */
+@theme {
+  --color-brand-black: #0a0a0a;
+  --color-brand-charcoal: #242424;
+  --color-brand-offwhite: #f5f5f0;
+  --color-brand-grey: #737373;
+  --color-brand-lightgrey: #e5e5e5;
+  --color-numiq: #ff7900;
+  --color-numviz: #16a34a;
+
+  --font-sans: var(--font-dm-sans), ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-heading:
+    'Neue Haas Grotesk Display Pro', 'Neue Haas Grotesk Text Pro', 'Neue Haas Grotesk',
+    'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --font-mono:
+    ui-monospace, 'SFMono-Regular', 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+}
+
+:root {
+  --color-fd-background: #ffffff;
+  --color-fd-foreground: #0a0a0a;
+  --color-fd-muted: #f5f5f0;
+  --color-fd-muted-foreground: #5c5c5c;
+  --color-fd-popover: #ffffff;
+  --color-fd-popover-foreground: #0a0a0a;
+  --color-fd-card: #f5f5f0;
+  --color-fd-card-foreground: #0a0a0a;
+  --color-fd-border: #e5e5e5;
+  --color-fd-secondary: #f5f5f0;
+  --color-fd-secondary-foreground: #242424;
+  --color-fd-accent: #f0f0ea;
+  --color-fd-accent-foreground: #0a0a0a;
+  --color-fd-ring: #737373;
+  --color-fd-overlay: rgb(10 10 10 / 0.25);
+
+  --product-accent: #0a0a0a;
+  --product-link: #0a0a0a;
+  --product-accent-contrast: #ffffff;
+  --site-border: #e5e5e5;
+  --site-surface: #ffffff;
+  --site-surface-muted: #f5f5f0;
+  --site-rule: #e5e5e5;
+}
+
+.dark {
+  --color-fd-background: #0a0a0a;
+  --color-fd-foreground: #f5f5f0;
+  --color-fd-muted: #1a1a1a;
+  --color-fd-muted-foreground: #a3a3a3;
+  --color-fd-popover: #141414;
+  --color-fd-popover-foreground: #f5f5f0;
+  --color-fd-card: #141414;
+  --color-fd-card-foreground: #f5f5f0;
+  --color-fd-border: #2a2a2a;
+  --color-fd-secondary: #1a1a1a;
+  --color-fd-secondary-foreground: #f5f5f0;
+  --color-fd-accent: #242424;
+  --color-fd-accent-foreground: #f5f5f0;
+  --color-fd-ring: #737373;
+  --color-fd-overlay: rgb(0 0 0 / 0.6);
+
+  --site-border: #2a2a2a;
+  --site-surface: #0a0a0a;
+  --site-surface-muted: #141414;
+  --site-rule: #242424;
+}
+
+[data-product='numiq'] {
+  --product-accent: #ff7900;
+  --product-accent-contrast: #0a0a0a;
+  --product-link: #c24100;
+  --color-fd-primary: #c24100;
+  --color-fd-primary-foreground: #ffffff;
+}
+
+[data-product='numviz'] {
+  --product-accent: #16a34a;
+  --product-accent-contrast: #ffffff;
+  --product-link: #15803c;
+  --color-fd-primary: #15803c;
+  --color-fd-primary-foreground: #ffffff;
+}
+
+.dark [data-product='numiq'] {
+  --product-link: #ffa25c;
+  --color-fd-primary: #ffa25c;
+  --color-fd-primary-foreground: #0a0a0a;
+}
+
+.dark [data-product='numviz'] {
+  --product-link: #4ade80;
+  --color-fd-primary: #4ade80;
+  --color-fd-primary-foreground: #0a0a0a;
+}
+
+html {
+  scrollbar-gutter: stable;
+  -webkit-text-size-adjust: 100%;
+}
+
+html > body[data-scroll-locked] {
+  margin-right: 0px !important;
+  --removed-body-scroll-bar-size: 0px !important;
+}
+
+body {
+  font-family: var(--font-sans);
+  text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+.font-heading {
+  font-family: var(--font-heading);
+  letter-spacing: -0.022em;
+}
+
+/* Long-form documentation typography */
+.prose {
+  --tw-prose-body: var(--color-fd-foreground);
+  --tw-prose-headings: var(--color-fd-foreground);
+  --tw-prose-links: var(--product-link, var(--color-fd-foreground));
+  --tw-prose-bold: var(--color-fd-foreground);
+  --tw-prose-counters: var(--color-fd-muted-foreground);
+  --tw-prose-bullets: var(--color-fd-muted-foreground);
+  --tw-prose-hr: var(--site-rule);
+  --tw-prose-quotes: var(--color-fd-foreground);
+  --tw-prose-quote-borders: var(--site-rule);
+  --tw-prose-captions: var(--color-fd-muted-foreground);
+  --tw-prose-code: var(--color-fd-foreground);
+  --tw-prose-th-borders: var(--site-rule);
+  --tw-prose-td-borders: var(--site-rule);
+  font-size: 0.9375rem;
+  line-height: 1.75;
+}
+
+.prose :where(h1, h2, h3, h4):not(:where([class~='not-prose'], [class~='not-prose'] *)) {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.prose a {
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+
+.prose :where(table) {
+  font-size: 0.875rem;
+}
+
+.prose :where(code):not(:where(pre *, [class~='not-prose'] *)) {
+  font-size: 0.86em;
+  font-weight: 450;
+  border: 1px solid var(--site-rule);
+  background: var(--site-surface-muted);
+  border-radius: 3px;
+  padding: 0.1rem 0.28rem;
+}
+
+.prose :where(code):not(:where(pre *, [class~='not-prose'] *))::before,
+.prose :where(code):not(:where(pre *, [class~='not-prose'] *))::after {
+  content: '';
+}
+
+/* Code blocks: keep horizontal scrolling comfortable on small screens */
+.shiki,
+pre {
+  font-variant-ligatures: none;
+}
+
+.prose pre {
+  border: 1px solid var(--site-rule);
+  border-radius: 6px;
+}
+
+/* Focus visibility everywhere */
+:focus-visible {
+  outline: 2px solid var(--product-link, var(--color-fd-foreground));
+  outline-offset: 2px;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--product-accent, #ff7900) 28%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

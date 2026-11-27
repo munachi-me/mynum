@@ -1,0 +1,227 @@
+---
+title: Metrics and insights
+description: Define reusable named calculations, group and compare them, and read the observations Numiq can defend.
+related:
+  - /numiq/docs/statistics
+  - /numiq/docs/grouping
+  - /numiq/docs/api/statistics
+---
+
+A metric is a named calculation that keeps its definition. The number travels with an
+account of how it was produced, so it can be printed, grouped, compared and recalculated
+later. Insights are the observations Numiq reports, each with the evidence behind it.
+
+## Creating a metric
+
+```ts
+import { useSampleDataset } from '@munachi-me/numiq';
+
+const sales = await useSampleDataset();
+
+const revenue = sales.createMetric({
+  name: 'Total Revenue',
+  column: 'revenue',
+  aggregation: 'sum',
+  format: { prefix: '$', decimals: 2, unit: 'currency' },
+});
+
+revenue.name; // "Total Revenue"
+revenue.value; // 31122.690000000002
+revenue.definition; // 'sum("revenue")'
+revenue.metric; // { value: 31122.69..., rows: 50, values: 50, reason: null }
+```
+
+`metric` reports the rows the calculation ran over and the present values it saw. When the
+two differ, the column has gaps, and the aggregation skipped them rather than counting them
+as zero.
+
+| Spec field    | Meaning                                                                                       |
+| ------------- | --------------------------------------------------------------------------------------------- |
+| `name`        | Metric name, used in tables and `toJSON()`                                                    |
+| `column`      | Column the aggregation reads                                                                  |
+| `aggregation` | `count`, `sum`, `mean`, `median`, `min`, `max`, `first`, `last`, `nunique`, `std`, `variance` |
+| `ddof`        | Divisor for `std` and `variance` (default 1)                                                  |
+| `format`      | `{ prefix, suffix, decimals, scale, unit }`                                                   |
+| `metadata`    | Arbitrary read-only metadata                                                                  |
+| `groupBy`     | Columns to group by for `byGroup()`                                                           |
+
+`createMetric(spec, rows, columns)` is exported for use without a dataset. It returns the
+same `Metric` class.
+
+## Reading a metric
+
+| Member             | Description                                    |
+| ------------------ | ---------------------------------------------- |
+| `name`             | The metric name                                |
+| `value`            | The computed value                             |
+| `metric`           | `{ value, rows, values, reason }`              |
+| `aggregation`      | The operation, or `null` for a callback metric |
+| `column`           | The column, or `null`                          |
+| `format`           | The resolved format hints                      |
+| `metadata`         | The metric metadata                            |
+| `groupBy`          | The grouping columns                           |
+| `definition`       | A readable definition, e.g. `sum("revenue")`   |
+| `rowCount`         | Rows the metric ran over                       |
+| `rows` / `columns` | The data the metric was built from             |
+
+`reason` explains an empty result: `"empty"`, `"no-values"` or `"not-numeric"`.
+
+## Grouped metrics
+
+Pass `groupBy` to compute the metric per group. Groups appear in first-appearance order of
+their key, so output is deterministic.
+
+```ts
+const byRegion = sales.createMetric({
+  name: 'Revenue',
+  column: 'revenue',
+  aggregation: 'sum',
+  groupBy: ['region'],
+});
+
+byRegion.byGroup().groupCount; // 4
+byRegion.byGroup().groups[0];
+// { key: { region: "North" }, value: 6058.01, rows: 13, values: 13, reason: null }
+
+byRegion.toDataset().columns; // ["region", "Revenue"]
+```
+
+## Custom calculations
+
+Supply `fn` instead of `aggregation`. With a `column`, the callback receives that column's
+present values. Without one, it receives the whole row set.
+
+```ts
+const spread = sales.createMetric({
+  name: 'Revenue range',
+  column: 'revenue',
+  fn: (values) => Math.max(...(values as number[])) - Math.min(...(values as number[])),
+});
+
+spread.value; // 2691.44
+spread.definition; // 'custom("revenue")'
+
+const rows = sales.createMetric({
+  name: 'Rows',
+  fn: (all) => all.length,
+});
+
+rows.value; // 50
+rows.definition; // "custom(rows)"
+```
+
+## Recalculation and comparison
+
+A metric can be recomputed over different rows without rebuilding its definition:
+
+```ts
+const north = sales.filter((row) => row.region === 'North');
+const scoped = revenue.recalculate(north.data, north.columns);
+
+scoped.value; // 6058.01
+scoped.rowCount; // 13
+```
+
+`compare()` puts a metric next to another result or a fixed number:
+
+```ts
+revenue.compare({ to: scoped.metric, label: 'North' });
+// {
+//   other: "North",
+//   value: 31122.690000000002,
+//   otherValue: 6058.01,
+//   difference: 25064.68,
+//   ratio: 5.137444474340584,
+//   percentChange: 513.7444474340584,
+//   percentDifference: 413.74444743405843,
+//   reason: null
+// }
+```
+
+`compare` returns `reason: "not-numeric"` when either side is not a number, and
+`reason: "zero-baseline"` when the baseline is zero, rather than producing `Infinity`.
+
+Two percentage fields exist, and they differ. For a metric that doubled, baseline `100` to
+`200`:
+
+| Field               | Formula                                   | Result |
+| ------------------- | ----------------------------------------- | ------ |
+| `percentChange`     | `value / otherValue * 100`                | `200`  |
+| `percentDifference` | `(value - otherValue) / otherValue * 100` | `100`  |
+
+`percentChange` predates `percentDifference` and reports the new value as a percentage of
+the baseline, which reads oddly for a field called "change". It is retained unchanged for
+compatibility; prefer `percentDifference` in new code.
+
+## Insights
+
+`Dataset.insights()` reports defensible observations, each with the values behind it. A
+check that cannot run is listed in `skipped` with a reason rather than being silently
+omitted.
+
+```ts
+const report = sales.insights();
+
+report.insights.length; // 5
+report.insights[0];
+// {
+//   kind: "outliers",
+//   severity: "notice",
+//   title: '"revenue" has 4 values outside the IQR fences',
+//   detail: "...",
+//   evidence: { ... },
+//   columns: ["revenue"]
+// }
+report.skipped; // [] — every check ran
+report.truncated; // 0 — nothing dropped by maxInsights
+report.thresholds; // the defaults actually used
+```
+
+| `kind`             | What it reports                                                |
+| ------------------ | -------------------------------------------------------------- |
+| `missing-data`     | Columns with absent values, as a count and share               |
+| `outliers`         | Values outside the IQR fences, with the fences themselves      |
+| `correlation`      | Numeric pairs at or above `strongCorrelation`                  |
+| `category-extreme` | Highest and lowest group means for each category               |
+| `group-change`     | The widest gap between comparable groups                       |
+| `dominance`        | A category value holding at least `dominanceShare` of rows     |
+| `trend`            | Monotonic movement of a measure over a date or datetime column |
+
+Severity is `"info"`, `"notice"` or `"warning"`.
+
+### Thresholds and their defaults
+
+| Option              | Default | Meaning                                                    |
+| ------------------- | ------- | ---------------------------------------------------------- |
+| `strongCorrelation` | `0.7`   | Minimum \|r\| to report a relationship                     |
+| `dominanceShare`    | `0.5`   | Share one value needs to count as dominant                 |
+| `outlierThreshold`  | `1.5`   | IQR fence multiplier                                       |
+| `trendStrength`     | `0.7`   | Minimum \|rho\| against time for a trend                   |
+| `minGroupSize`      | `3`     | Rows a group needs before its mean is ranked               |
+| `maxCategoryRatio`  | `0.5`   | Highest distinct-to-rows ratio still treated as a category |
+| `minRelativeGap`    | `0.25`  | Smallest gap worth reporting, as a fraction of the range   |
+| `maxInsights`       | `50`    | Maximum insights returned                                  |
+| `minTrendPoints`    | `4`     | Distinct timestamps a trend needs                          |
+
+`resolveInsightOptions(options?)` returns the resolved set, so you can inspect what a
+partial override produced.
+
+### What insights refuse to claim
+
+- **No significance.** The correlation detail says so explicitly. There is no p-value
+  anywhere.
+- **No identifier rankings.** A near-unique text column such as an order id is excluded as a
+  grouping dimension, because ranking one-row groups would describe a single row as a
+  category.
+- **No noise as findings.** A group gap is measured against the measure's observed range, so
+  a small difference is not reported.
+- **No silent omissions.** `skipped` explains every check that could not run, so an empty
+  `insights` array is distinguishable from a check that never executed.
+
+`analyze(input, options?)` is exported for rows you have not wrapped in a dataset; it takes
+`{ rows, columns, schema }`.
+
+## Next steps
+
+- [Joins and reshaping](/numiq/docs/joins)
+- [API reference: metrics and insights](/numiq/docs/api/statistics)

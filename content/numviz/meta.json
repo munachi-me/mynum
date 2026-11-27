@@ -1,0 +1,20 @@
+{
+  "title": "Numviz",
+  "pages": [
+    "index",
+    "---Get started---",
+    "getting-started",
+    "installation",
+    "---Guides---",
+    "charts",
+    "tables",
+    "metrics",
+    "dashboards",
+    "export",
+    "react",
+    "---Reference---",
+    "api",
+    "examples",
+    "troubleshooting"
+  ]
+}

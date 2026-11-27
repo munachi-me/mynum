@@ -1,0 +1,399 @@
+---
+title: Statistics and analysis
+description: Describe columns, measure relationships, find outliers, fit a regression and run hypothesis tests — with every undefined result reported as null.
+related:
+  - /numiq/docs/metrics
+  - /numiq/docs/grouping
+  - /numiq/docs/api/statistics
+---
+
+Numiq separates describing what is in a column from testing what it means. Descriptive
+functions return `null` when a statistic does not exist for the data; hypothesis tests
+return a result object with a `pValue` that may be `NaN` when the test cannot run.
+
+## Describing columns
+
+`describe()` profiles columns. With no argument it profiles every column and returns a
+description you can print as a table; with a column name it returns that column's profile
+directly, so there is no one-row wrapper to unwrap.
+
+```ts
+sales.describe().table(); // one row per column
+sales.describe({ ddof: 0 }); // every column, population formula
+sales.describe('revenue').mean; // 622.4538
+sales.describe().get('revenue'); // the same profile, by name
+```
+
+```text
+┌─────┬──────────┬─────────┬───────┬─────────┬────────┬──────────┬──────────┬────────┬──────────────────┬──────────────────┬────────────┐
+│ idx │ column   │ type    │ count │ missing │ unique │ sum      │ mean     │ median │ min              │ max              │ std        │
+├─────┼──────────┼─────────┼───────┼─────────┼────────┼──────────┼──────────┼────────┼──────────────────┼──────────────────┼────────────┤
+│ 0   │ order_id │ string  │ 50    │ 0       │ 50     │ NULL     │ NULL     │ NULL   │ ORD-1001         │ ORD-1050         │ NULL       │
+│ …   │ …        │ …       │ …     │ …       │ …      │ …        │ …        │ …      │ …                │ …                │ …          │
+│ 6   │ revenue  │ number  │ 50    │ 0       │ 50     │ 31122.69 │ 622.4538 │ 346.07 │ 29.5             │ 2720.94          │ 664.003407 │
+└─────┴──────────┴─────────┴───────┴─────────┴────────┴──────────┴──────────┴────────┴──────────────────┴──────────────────┴────────────┘
+```
+
+Each profile carries `count`, `missing`, `total`, `unique`, `sum`, `mean`, `median`,
+`mode`, `min`, `max`, `range`, `variance`, `std`, `q1`, `q3`, `iqr`, and any requested
+`percentiles`.
+
+Statistics that do not apply to a column's type are `null`, never `0`:
+
+| Statistic                                               | numeric | boolean | temporal | text   | mixed  |
+| ------------------------------------------------------- | ------- | ------- | -------- | ------ | ------ |
+| count, missing, unique, mode, min, max                  | yes     | yes     | yes      | yes    | yes    |
+| sum, mean, median, quartiles, iqr, variance, std, range | yes     | `null`  | `null`   | `null` | `null` |
+
+`variance` and `std` default to the sample formula (`ddof: 1`); pass `ddof: 0` for the
+population formula. Every profile records the `ddof` it used, so a result is never
+ambiguous about which formula produced it. Percentiles are interpolated with the same method
+as `numpy.percentile` and R's `quantile(type = 7)`.
+
+```ts
+const profile = sales.describe('revenue', { ddof: 0, percentiles: [10, 90] });
+
+profile.std; // the population standard deviation
+profile.percentiles.p90; // a full-precision number
+```
+
+### From a description to a dataset
+
+`DatasetDescription` is an analytical result, not a `Dataset`. Call `toDataset()` when you
+need tabular output with every statistic — including requested percentiles, which become
+columns named after their keys:
+
+```ts
+sales
+  .describe({ percentiles: [90] })
+  .toDataset()
+  .select(['name', 'kind', 'mean', 'p90']);
+```
+
+### Standalone statistics
+
+The primitives are exported for values outside a dataset:
+
+| Function                | Returns                                       |
+| ----------------------- | --------------------------------------------- |
+| `quantile(values, q)`   | Interpolated quantile for `q` in `[0, 1]`     |
+| `percentile(values, p)` | Interpolated percentile for `p` in `[0, 100]` |
+| `quartiles(values)`     | `{ q1, q2, q3 }` or `null`                    |
+| `iqr(values)`           | Interquartile range or `null`                 |
+| `mode(values)`          | Most frequent present value                   |
+| `range(values)`         | `max - min` or `null`                         |
+| `extremes(values)`      | `{ min, max }` or `null`                      |
+
+## Correlation
+
+```ts
+sales.correlation('quantity', 'revenue'); // { r: 0.43724861958188593, n: 50, reason: null }
+sales.rankCorrelation('quantity', 'revenue'); // { r: 0.5244511749947358, n: 50, reason: null }
+```
+
+| Method                              | Measures                   | Use when                                             |
+| ----------------------------------- | -------------------------- | ---------------------------------------------------- |
+| `correlation(left, right)`          | Pearson linear association | Both columns are roughly continuous and outlier-free |
+| `rankCorrelation(left, right)`      | Spearman rank association  | Data is skewed, has outliers, or is ordinal          |
+| `covariance(left, right, options?)` | Covariance                 | You need the raw scale, not a normalized coefficient |
+
+A coefficient that does not exist for the data returns `null` with a `reason`:
+
+| Situation                     | Result                                        |
+| ----------------------------- | --------------------------------------------- |
+| Fewer than two complete pairs | `{ r: null, n, reason: "insufficient-data" }` |
+| One column is constant        | `{ r: null, n, reason: "zero-variance" }`     |
+| Both columns vary             | `{ r: number, n, reason: null }`              |
+
+`NaN` would silently poison downstream arithmetic, and `0` would claim "no relationship"
+when the honest answer is "cannot be computed".
+
+<Callout type="info" title="Missing values are handled pairwise">
+  Correlations use only rows where both columns are present. `n` can therefore differ between pairs,
+  and every result reports the `n` it used.
+</Callout>
+
+<Callout type="warn" title="No significance attached">
+  `correlation()` and `rankCorrelation()` carry `r`, `n` and `reason` — and nothing else. There is
+  no p-value and no "significant" flag. Use a hypothesis test when you need one, and state its
+  assumptions.
+</Callout>
+
+### Correlation matrix
+
+```ts
+const matrix = sales.correlationMatrix();
+
+matrix.columns; // ["quantity", "revenue"]
+matrix.method; // "pearson"
+matrix.get('quantity', 'revenue'); // { x, y, r, n, reason }
+```
+
+`correlationMatrix(columns?, method?)` defaults to every numeric column and Pearson.
+Pass `"spearman"` for rank correlations:
+
+```ts
+sales.correlationMatrix(['quantity', 'revenue'], 'spearman');
+```
+
+## Position and shape
+
+| Method                          | Returns                                               |
+| ------------------------------- | ----------------------------------------------------- |
+| `zScores(column, options?)`     | `{ values, mean, std, reason }`                       |
+| `standardize(values, options?)` | Z-scores as a standalone array                        |
+| `percentileRank(column, value)` | Share of values at or below `value`, or `null`        |
+| `skewness(column)`              | Bias-corrected sample skewness, or `null`             |
+| `kurtosis(column)`              | Bias-corrected **excess** kurtosis, or `null`         |
+| `fiveNumberSummary(column)`     | `{ min, q1, median, q3, max, mean, count }`           |
+| `normalize(values, options?)`   | Scaled values, or `null` where the scale is undefined |
+
+```ts
+sales.percentileRank('revenue', 622.4538); // 68
+sales.skewness('revenue'); // 1.7133020612357541
+sales.kurtosis('revenue'); // 2.3952120604810103 (excess: a normal distribution is 0)
+
+sales.fiveNumberSummary('revenue');
+// { min: 29.5, q1: 181.4875, median: 346.07, q3: 870.4875, max: 2720.94, mean: 622.4538, count: 50 }
+```
+
+`skewness` needs at least three values and `kurtosis` at least four; both return `null`
+below that and for a constant column.
+
+### Scaling
+
+```ts
+import { normalize, standardize } from '@munachi-me/numiq';
+
+standardize([1, 2, 3]); // [-1, 0, 1]
+normalize([1, 2, 3]); // [0, 0.5, 1]
+normalize([1, 2, 3], { min: -1, max: 1 }); // [-1, 0, 1]
+normalize([-2, 1, 2], { method: 'maxabs' }); // [-1, 0.5, 1]
+```
+
+Both return `null` for every value when the scale is undefined — an empty column, a
+constant column, or an all-zero column under `maxabs` — rather than dividing by zero.
+
+Add scores to a dataset without leaving the chain:
+
+```ts
+sales.withZScores('revenue'); // adds revenue_z
+sales.withZScores('revenue', 'rev_z'); // custom name
+```
+
+A constant source column produces an all-null score column, so the scaling failure is
+visible in the data rather than silently absent.
+
+## Outliers
+
+```ts
+sales.outliers('revenue'); // IQR fences, k = 1.5
+sales.outliers('revenue', { threshold: 3 }); // Tukey's "extreme" fence
+sales.outliers('revenue', { method: 'zscore' }); // |z| > 3
+sales.outliers('revenue', { method: 'modified-zscore' }); // median/MAD, |z| > 3.5
+```
+
+The result carries the method, threshold, fences, considered count and the outlier rows:
+
+```ts
+const result = sales.outliers('revenue');
+
+result.method; // "iqr"
+result.threshold; // 1.5
+result.fences; // { lower: -852.0125, upper: 1903.9875 }
+result.outliers[0]; // { index: 5, value: 2720.94, zScore: null, side: "high" }
+```
+
+IQR is the default because it assumes nothing about the distribution. A z-score threshold
+assumes roughly normal data and, on a skewed column, flags only the long tail: on this
+sample the z-score method finds one outlier where IQR finds four.
+
+A single extreme value inflates the standard deviation enough to hide itself. For
+`[1, 2, 3, 4, 5, 6, 7, 8, 9, 100]` the z-score of `100` is about `2.836`, under a threshold
+of 3, so the z-score method finds nothing while IQR finds it. `modified-zscore` uses the
+median and median absolute deviation instead, neither of which one extreme value can move.
+
+## Data quality
+
+`profile()` keeps every `describe()` statistic and adds what is true of the dataset as a
+whole:
+
+```ts
+const profile = sales.profile();
+
+profile.summary.missingPercent; // 0
+profile.summary.duplicateRows; // 0
+profile.summary.constantColumns; // []
+profile.summary.types; // { numeric: 2, categorical: 4, temporal: 1, boolean: 0, mixed: 0, empty: 0 }
+profile.healthy; // true — no error-severity findings
+profile.findingsTable();
+```
+
+Findings carry a stable `code`, a `severity` (`error`, `warning`, `info`) and the column and
+count affected. They are sorted worst first and capped at `maxFindings` (100 by default);
+`findingCount` still holds the true total.
+
+```ts
+const profile = sales.profile();
+
+profile.findings[0];
+// { code: "OUTLIERS", severity: "info", column: "revenue", count: 4, message: "..." }
+```
+
+Companion methods tell you exactly which rows, then fix them:
+
+| Method                     | Returns                                                                     |
+| -------------------------- | --------------------------------------------------------------------------- |
+| `missingValues(options?)`  | Per-column missing counts, percentages and row indices                      |
+| `findDuplicates(options?)` | Duplicate groups, duplicate row count, removable count                      |
+| `detectOutliers(options?)` | Outlier rows per column, using `"iqr"` or `"zscore"`                        |
+| `qualityReport()`          | Flat findings list with `bySeverity`, `forColumn()`, `forCode()`, `table()` |
+
+```ts
+sales.missingValues().totalMissing; // 0
+sales.findDuplicates().duplicateRows; // 0
+sales.detectOutliers({ columns: ['revenue'], method: 'iqr' }).totalOutliers; // 4
+sales.qualityReport().bySeverity; // { error: 0, warning: 0, info: 1 }
+```
+
+`normalizeText()` reports what it changed, and `dropDuplicates()` removes the duplicates a
+report identified. See [Transformation](/numiq/docs/transformation).
+
+## Linear regression
+
+```ts
+const model = sales.regression({ target: 'revenue', features: ['quantity'] });
+
+model.intercept; // 62.9451108290217
+model.coefficients.quantity; // 142.00728151547673
+model.rSquared; // 0.1911863553262645
+model.n; // 50
+model.rmse; // root mean squared error
+model.pValues().quantity; // coefficient p-value
+model.predict([{ quantity: 10 }]); // [a predicted revenue]
+model.residuals(); // actual minus predicted, per used row
+```
+
+Several numeric features fit a multiple regression through the same path. `parameters`
+reports how many were estimated (features plus the intercept).
+
+- Features must be numeric. A text column is rejected with a `ValidationError` naming the
+  column; encode it first.
+- Rows are dropped listwise: a row is used only if the target and every feature are present.
+  `model.n` reports how many survived.
+- When the design matrix is singular — collinear features — the call throws rather than
+  returning a model with `NaN` coefficients.
+
+Regression describes association. It does not check linearity, independence, constant
+variance or normal errors, and a coefficient is not a causal effect.
+
+## Hypothesis testing
+
+Every test returns the same shape: `test`, `statistic`, `df`, `df2`, `pValue`, the null and
+alternative in words, `significant`, `alpha`, an `interpretation`, `n` and a `details` bag.
+
+| Method                                                 | Question                                          |
+| ------------------------------------------------------ | ------------------------------------------------- |
+| `tTest(column, { mu })`                                | Is the mean different from `mu`?                  |
+| `tTestBetween(column, groupColumn, groups?, options?)` | Do two group means differ? Welch by default       |
+| `pairedTTest(before, after, options?)`                 | Is the within-pair difference centred on zero?    |
+| `chiSquare(column, otherColumn, options?)`             | Are two categorical columns associated?           |
+| `anova(column, groupColumn, options?)`                 | Does any group mean differ?                       |
+| `normalityTest(column, options?)`                      | Is the column normally distributed? (Jarque-Bera) |
+| `meanConfidenceInterval(column, confidence?)`          | Interval for the mean                             |
+
+```ts
+sales.tTest('revenue', { mu: 600 });
+// statistic 0.23911374677136976, df 49, pValue 0.8120147059540308, significant false
+
+sales.anova('revenue', 'region');
+// F 2.2986454728893846, df 3, df2 46, pValue 0.08990259759068953, significant false
+```
+
+`tTestBetween` uses Welch's t-test by default because it does not assume equal variances.
+Pass `{ pooled: true }` only when equal variances are genuinely known.
+
+The standalone functions take raw arrays: `oneSampleTTest`, `twoSampleTTest`,
+`pairedTTest`, `chiSquareTest`, `oneWayAnova`, `jarqueBeraTest`,
+`meanConfidenceInterval`.
+
+<Callout type="warn" title="Assumptions are documented, not checked">
+  A t-test on heavily skewed data, or an ANOVA on unequal variances with unequal group sizes,
+  returns a p-value that is simply wrong — and nothing warns you. Use `describe()` and `profile()`
+  to look first.
+</Callout>
+
+A test that cannot be computed — fewer than two values, or a zero-variance sample — returns
+`pValue: NaN` with an `interpretation` saying why, so a loop over many columns does not die
+on the first constant one. `significant` is always `false` in that case.
+
+## Probability distributions
+
+Four distributions, plus the special functions they are built from. Each exposes `mean`,
+`variance`, `sd`, a density or mass, a cumulative, a quantile and a `sample`.
+
+```ts
+import {
+  binomialDistribution,
+  normalCdf,
+  normalQuantile,
+  poissonDistribution,
+} from '@munachi-me/numiq';
+
+normalCdf(1.96); // 0.9750021048517796
+normalQuantile(0.975); // 1.959963986120195
+
+const binom = binomialDistribution(10, 0.5);
+binom.pmf(5); // 0.24609374999999936
+binom.cdf(5); // 0.623046875
+
+poissonDistribution(3).cdf(2); // 0.4231900811268444
+```
+
+| Factory                                     | Kind       |
+| ------------------------------------------- | ---------- |
+| `normalDistribution(mean?, sd?)`            | Continuous |
+| `uniformDistribution(min?, max?)`           | Continuous |
+| `binomialDistribution(trials, probability)` | Discrete   |
+| `poissonDistribution(rate)`                 | Discrete   |
+
+`drawSamples(distribution, count, { random })` draws many at once. Pass a seeded generator
+and the same seed gives the same draws; without one it uses `Math.random`.
+
+These distributions do not estimate their own parameters from data. Choosing a distribution
+and its parameters is a modelling decision the caller owns.
+
+## Sampling and cohorts
+
+```ts
+sales.stratifiedSample(20, 'region'); // proportional draw from each region
+sales.stratifiedSample(20, ['region', 'category'], { seed: 42 });
+sales.systematicSample(10, { seed: 1 }); // every 10th row after a random start
+sales.sortByTime('date').percentChange('revenue'); // adds revenue_pctChange
+sales.cohort({
+  cohort: 'region',
+  time: 'date',
+  interval: 'month',
+  metrics: [
+    { column: 'revenue', operation: 'sum' },
+    { column: 'revenue', operation: 'count', name: 'orders' },
+  ],
+});
+// { region: "North", period: "2026-01", rows: 5, revenue_sum: 2552.41, orders: 5 }
+```
+
+- Stratified allocation is largest-remainder, so the total is exactly `size`; a tiny stratum
+  with a rounded allocation of zero still gets one row.
+- Systematic sampling always takes exactly `floor(n / interval)` rows. If the data are
+  periodic with a period dividing `interval`, the sample can be unrepresentative.
+- `percentChange` is `null` for the first row and wherever the previous value is missing or
+  zero.
+- Cohort analysis produces one row per cohort × period cell, ordered by cohort
+  first-appearance then ascending period. A time value that cannot be parsed throws rather
+  than being dropped.
+
+## Next steps
+
+- [Metrics and insights](/numiq/docs/metrics)
+- [Window functions and time series](/numiq/docs/window-functions)
+- [API reference: statistics](/numiq/docs/api/statistics)

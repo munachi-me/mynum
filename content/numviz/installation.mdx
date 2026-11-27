@@ -1,0 +1,113 @@
+---
+title: Installation
+description: Requirements, module format, entry points and framework setup for Numviz.
+related:
+  - /numviz/docs/getting-started
+  - /numviz/docs/react
+---
+
+## Install
+
+```bash
+npm install @munachi-me/numviz
+```
+
+The package name is scoped: `@munachi-me/numviz`.
+
+## Requirements
+
+| Requirement          | Value                                           |
+| -------------------- | ----------------------------------------------- |
+| Node.js              | 18 or later (declared `node >= 18`)             |
+| Runtime dependencies | None                                            |
+| Module format        | ESM only                                        |
+| Type declarations    | Bundled                                         |
+| React                | Optional peer, `react >= 18`, only for `/react` |
+
+Numviz ships as an ES module. A CommonJS `require("@munachi-me/numviz")` is not supported;
+use `import` in ESM code, or a bundler that converts it.
+
+## Entry points
+
+| Specifier                         | Contents                                                                                                                                                        |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@munachi-me/numviz`              | `createChart`, `createTable`, `createMetric`, `createDashboard`, `createReport`, `REPORT_PRESETS`, `version`, `NumvizError`, `isNumvizError`, default namespace |
+| `@munachi-me/numviz/react`        | `Chart`, `DataTable`, `Metric`, `Dashboard`, `DashboardWidget`                                                                                                  |
+| `@munachi-me/numviz/package.json` | Package metadata                                                                                                                                                |
+
+The root entry never imports React, so a plain HTML page pays nothing for the optional React
+layer.
+
+## Importing
+
+Named imports and the default namespace share one implementation:
+
+```ts
+import { createChart, createTable, version } from '@munachi-me/numviz';
+
+import Numviz from '@munachi-me/numviz';
+
+Numviz.createChart === createChart; // true
+Numviz.version === version; // true
+```
+
+## Where Numviz runs
+
+| Capability                                                                      | Browser                           | Node.js                     |
+| ------------------------------------------------------------------------------- | --------------------------------- | --------------------------- |
+| `createChart`, `createTable`, `createMetric`, `createDashboard`, `createReport` | Yes                               | Yes (no DOM until `render`) |
+| `render`, `update`, `destroy`, `print`                                          | Yes                               | Needs a DOM, e.g. jsdom     |
+| `metric.result` computation                                                     | Yes                               | Yes                         |
+| `chart.toSVG()`                                                                 | Yes, after `render`               | After `render` in a DOM     |
+| `chart.toPNG()`                                                                 | Yes, needs canvas                 | No                          |
+| `dashboard.export()`                                                            | No — rejects with `EXPORT_FAILED` | Yes                         |
+
+Metric computation, configuration validation and data normalization are DOM-free. Rendering
+is not.
+
+## Bundlers
+
+- The package is side-effect free, so unused engines tree-shake.
+- No CSS file is shipped. Each instance injects the styles it needs, scoped to itself.
+- No fonts are shipped. Set `theme.fontFamily` to control typography.
+
+## Next.js
+
+Numviz touches the DOM only inside `render()`, which the React components call in an effect.
+Import them from a Client Component:
+
+```tsx title="app/revenue-chart.tsx"
+'use client';
+
+import { Chart } from '@munachi-me/numviz/react';
+
+export function RevenueChart({ rows }: { rows: Record<string, unknown>[] }) {
+  return <Chart type="bar" data={rows} x="month" y="revenue" title="Revenue" />;
+}
+```
+
+The core package can also be imported in a Server Component as long as nothing renders:
+building a config, computing a metric, or serializing data is safe.
+
+## Verify the install
+
+```ts
+import { version, createMetric } from '@munachi-me/numviz';
+
+console.log(version); // "1.0.2"
+
+const metric = createMetric({
+  name: 'Rows',
+  data: [{ a: 1 }, { a: 2 }],
+  column: 'a',
+  aggregation: 'count',
+});
+
+metric.result.value; // 2
+```
+
+## Next steps
+
+- [Getting started](/numviz/docs/getting-started)
+- [React and Next.js](/numviz/docs/react)
+- [Troubleshooting](/numviz/docs/troubleshooting)

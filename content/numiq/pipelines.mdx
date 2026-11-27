@@ -1,0 +1,228 @@
+---
+title: Pipelines and validation
+description: Declare a workflow of load, transform, validate and tap steps, then run it with per-step reports and column lineage.
+related:
+  - /numiq/docs/window-functions
+  - /numiq/docs/compatibility
+  - /numiq/docs/api/operations
+---
+
+## Schema validation
+
+`validate()` checks a dataset against a schema and returns a report. Nothing throws for bad
+data: a caller usually wants every problem at once, and the report names the column, the row
+and the value for each one.
+
+```ts
+const data = createDataset([
+  { id: 'A-1', revenue: 10 },
+  { id: 'B-2', revenue: -5 },
+  { id: 'bad', revenue: 3 },
+]);
+
+const report = data.validate({
+  id: { type: 'string', nullable: false, pattern: '[A-Z]-\\d+' },
+  revenue: { type: 'number', min: 0 },
+});
+
+report.valid; // false
+report.issueCount; // 2
+report.issues[0];
+// {
+//   code: "BELOW_MINIMUM",
+//   message: 'Column "revenue" value is below the minimum 0.',
+//   column: "revenue",
+//   row: 1,
+//   value: -5,
+//   expected: ">= 0"
+// }
+report.byCode; // { BELOW_MINIMUM: 1, PATTERN_MISMATCH: 1 }
+```
+
+### Rules
+
+| Rule                          | Checks                                                               |
+| ----------------------------- | -------------------------------------------------------------------- |
+| `type`                        | `string`, `number`, `integer`, `boolean`, `date`, `datetime`, `time` |
+| `nullable`                    | Whether a missing value is allowed                                   |
+| `min` / `max`                 | Numeric, date or string bounds                                       |
+| `allowed`                     | Membership in a list of values                                       |
+| `pattern`                     | Regular expression, anchored to the whole value                      |
+| `minLength` / `maxLength`     | String length                                                        |
+| `unique`                      | Whole-column uniqueness, or a composite key when given columns       |
+| `validate(value, row, index)` | Custom predicate; return `false` or a message                        |
+
+A column listed with no rules is still checked for presence.
+
+```ts
+data.validate({ order_id: { unique: true } }); // DUPLICATE_VALUE
+data.validate({ line: { unique: ['order_id', 'line_no'] } }); // composite key
+```
+
+`1` and `"1"` are different values, and missing values are exempt from `unique`: repeating
+"no value" is not a duplicate. A `date` or `datetime` column accepts either a `Date` or an
+ISO string, because the column holds whichever form the value arrived as.
+
+### The report
+
+| Field                                  | Meaning                                |
+| -------------------------------------- | -------------------------------------- |
+| `valid`                                | `true` when there are no issues        |
+| `rowCount` / `columnCount` / `checked` | Scope of the check                     |
+| `issues`                               | Every issue found, up to `maxIssues`   |
+| `issueCount`                           | Total issues found                     |
+| `truncated`                            | Whether `maxIssues` cut the list short |
+| `invalidRows`                          | Rows with at least one issue           |
+| `byCode`                               | Issue counts per code                  |
+
+`validate(schema, { maxIssues, columnsOnly })` bounds the work. `columnsOnly` checks the
+column-level rules without scanning every value.
+
+### Throwing instead of reporting
+
+`validateOrThrow()` returns the dataset when it passes, and throws `ValidationError` when it
+does not:
+
+```ts
+data.validateOrThrow({ revenue: { min: 0 } });
+// ValidationError: Dataset failed validation: 1 issue(s) across 1 row(s).
+// First issue: Column "revenue" value is below the minimum 0.
+```
+
+### Deriving a schema
+
+`inferSchema(rows, columns)` derives a starting schema from data:
+
+```ts
+inferSchema(data.data, data.columns);
+// {
+//   id: { nullable: false, type: "string" },
+//   revenue: { nullable: true, type: "integer" }
+// }
+```
+
+`validateRows(rows, columns, schema, options?)` is the standalone check behind
+`Dataset.validate`, for rows you have not wrapped in a dataset.
+
+## Pipelines
+
+A pipeline is a definition, not an execution. Building one runs nothing; `run()` executes
+it. That split makes a workflow reusable and lets you inspect it before it touches data.
+
+```ts
+import { pipeline } from '@munachi-me/numiq';
+
+const workflow = pipeline({ name: 'sales' })
+  .load(() => loadCSV('sales.csv'), { name: 'load' })
+  .transform((data) => data.filter((row) => Number(row.revenue) > 0), { name: 'positive' })
+  .validate({ revenue: { type: 'number', min: 0 } }, { name: 'schema' })
+  .build();
+
+const result = await workflow.run();
+
+result.ok; // true
+result.dataset?.rowCount; // the rows that survived
+result.steps; // per-step timing, rows, columns, duration
+result.lineage; // columns and row count after each step
+```
+
+### Steps
+
+| Method                             | Kind        | Receives                                          |
+| ---------------------------------- | ----------- | ------------------------------------------------- |
+| `load(loader, options?)`           | `load`      | The step context; returns data                    |
+| `transform(transformer, options?)` | `transform` | The current dataset                               |
+| `validate(schema, options?)`       | `validate`  | The current dataset; checks a schema              |
+| `tap(observer, options?)`          | `tap`       | The current dataset; observes without changing it |
+
+Steps may be synchronous or asynchronous, and the two mix freely: `run()` is always
+asynchronous, so adding an async step later does not change the calling code. The report
+records the timing actually observed, not what was expected.
+
+### build() and run()
+
+`build()` finalizes the definition and returns the same pipeline, sealed: adding another
+step afterwards throws.
+
+```ts
+workflow.built; // true
+workflow.transform((data) => data); // ValidationError: This pipeline is sealed...
+```
+
+`run()` does not require `build()`, so both styles work and produce the same result.
+
+### The run report
+
+| Field                        | Meaning                                                              |
+| ---------------------------- | -------------------------------------------------------------------- |
+| `dataset`                    | The final dataset, or `null` when a step failed                      |
+| `ok`                         | Whether every step succeeded                                         |
+| `steps`                      | Per-step `{ name, kind, timing, durationMs, rows, columns, error? }` |
+| `lineage`                    | Per-step `{ columns, rows, addedColumns, removedColumns }`           |
+| `failedStep` / `failedIndex` | Where it stopped, when it did                                        |
+| `durationMs`                 | Total wall time                                                      |
+| `executed` / `total`         | Steps run out of steps declared                                      |
+
+By default a failing step is recorded and returned with `ok: false`, along with the name and
+index of the step and the steps that succeeded before it. Pass `{ throwOnError: true }` to
+throw a `PipelineError` naming the step instead:
+
+```ts
+try {
+  await workflow.run({ throwOnError: true });
+} catch (error) {
+  if (error instanceof PipelineError) {
+    console.log(error.step, error.stepIndex, error.stepKind);
+  }
+}
+```
+
+`PipelineError` extends `NumiqError` with code `PIPELINE_ERROR` and carries `step`,
+`stepIndex`, `stepKind` and the original error.
+
+### Lineage
+
+Lineage records what each step did to the table — the columns and row count after it, plus
+the columns it added or removed. It lives in the report, never in the row values, so it
+cannot change the shape of the data.
+
+```ts
+result.lineage;
+// [
+//   { index: 0, name: "load", kind: "load", columns: ["id", "revenue"], rows: 4, addedColumns: ["id", "revenue"], removedColumns: [] },
+//   { index: 1, name: "positive", kind: "transform", columns: ["id", "revenue"], rows: 2, addedColumns: [], removedColumns: [] },
+//   ...
+// ]
+```
+
+### Describing a pipeline
+
+`describe()` renders the definition as data without running it:
+
+```ts
+const description = workflow.describe();
+
+description.name; // "sales"
+description.steps; // name, kind, custom, and schema per step
+description.reproducible; // false when a step holds a callback
+description.nonDeterministic; // which steps those are
+description.built; // true after build()
+```
+
+A function has no portable text form, so callback steps are reported honestly as
+non-reproducible rather than serialised. Nothing in Numiq `eval`s a string.
+
+### Members
+
+| Member      | Meaning                           |
+| ----------- | --------------------------------- |
+| `name`      | Pipeline name                     |
+| `length`    | Number of steps                   |
+| `stepNames` | Step names in order               |
+| `built`     | Whether `build()` has been called |
+| `lineage`   | Lineage from the last run         |
+
+## Next steps
+
+- [Compatibility and troubleshooting](/numiq/docs/compatibility)
+- [API reference: operations](/numiq/docs/api/operations)

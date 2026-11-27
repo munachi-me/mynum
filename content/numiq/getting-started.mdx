@@ -1,0 +1,153 @@
+---
+title: Getting started
+description: Install Numiq, load the bundled sample, inspect it and run your first analysis.
+related:
+  - /numiq/docs/installation
+  - /numiq/docs/data-loading
+  - /numiq/docs/datasets
+---
+
+This page takes you from an empty project to a working analysis. Every snippet runs
+against `@munachi-me/numiq` 2.0.1.
+
+## Requirements
+
+- Node.js 18 or later for filesystem loading.
+- Any modern browser or bundler for the browser-safe entry.
+- No other dependencies. Numiq has zero runtime dependencies.
+
+## Install
+
+```bash
+npm install @munachi-me/numiq
+```
+
+## Load the bundled sample
+
+The package ships a fixed 50-row sales table, so you can try the API without creating any
+files:
+
+```ts title="first-analysis.ts"
+import { useSampleDataset } from '@munachi-me/numiq';
+
+const sales = await useSampleDataset();
+
+console.log(sales.shape); // [50, 7]
+console.log(sales.columns);
+// ["order_id", "date", "product", "category", "region", "quantity", "revenue"]
+```
+
+The sample is identical on every call and works in the browser as well as in Node.js.
+
+## Inspect the data
+
+```ts
+console.log(sales.head(3).table());
+```
+
+```text
+┌─────┬──────────┬────────────┬────────────────────────────┬─────────────┬────────┬──────────┬─────────┐
+│ idx │ order_id │ date       │ product                    │ category    │ region │ quantity │ revenue │
+├─────┼──────────┼────────────┼────────────────────────────┼─────────────┼────────┼──────────┼─────────┤
+│ 0   │ ORD-1001 │ 2026-01-04 │ Aurora Desk Lamp           │ Lighting    │ North  │ 1        │ 48      │
+│ 1   │ ORD-1002 │ 2026-01-11 │ Nimbus Wireless Mouse      │ Accessories │ West   │ 2        │ 57      │
+│ 2   │ ORD-1003 │ 2026-01-18 │ Vertex Mechanical Keyboard │ Accessories │ East   │ 3        │ 280.35  │
+└─────┴──────────┴────────────┴────────────────────────────┴─────────────┴────────┴──────────┴─────────┘
+Showing 3 of 3 rows.
+3 rows × 7 columns
+```
+
+`sales.dtypes` reports the inferred type per column:
+
+```ts
+{
+  order_id: "string",
+  date: "date",
+  product: "string",
+  category: "string",
+  region: "string",
+  quantity: "integer",
+  revenue: "number"
+}
+```
+
+## Run a first analysis
+
+```ts
+const byRegion = sales.groupBy('region').aggregate({
+  revenue: { column: 'revenue', op: 'sum' },
+  orders: { op: 'count' },
+});
+
+byRegion.table();
+```
+
+```text
+┌─────┬────────┬───────────────────┬────────┐
+│ idx │ region │ revenue           │ orders │
+├─────┼────────┼───────────────────┼────────┤
+│ 0   │ North  │ 6058.01           │ 13     │
+│ 1   │ West   │ 13021.64          │ 13     │
+│ 2   │ East   │ 4726.64           │ 12     │
+│ 3   │ South  │ 7316.400000000001 │ 12     │
+└─────┴────────┴───────────────────┴────────┘
+```
+
+A single column profile needs no wrapping:
+
+```ts
+const revenue = sales.describe('revenue');
+
+revenue.mean; // 622.4538
+revenue.median; // 346.07
+revenue.std; // 664.0034066543111 (sample formula, ddof = 1)
+```
+
+## Understand the outputs
+
+| You call                                 | You get                                                    |
+| ---------------------------------------- | ---------------------------------------------------------- |
+| `sales.shape`                            | A `[rows, columns]` tuple.                                 |
+| `sales.head(3)`                          | A new `Dataset` with the first three rows.                 |
+| `sales.describe()`                       | A `DatasetDescription`; call `.table()` or `.toDataset()`. |
+| `sales.describe("revenue")`              | A single `ColumnProfile` object.                           |
+| `sales.groupBy("region").aggregate(...)` | A new `Dataset` of one row per group.                      |
+| `sales.query()...execute()`              | A new `Dataset` with the matching rows.                    |
+
+Derived datasets report `importReport` as `null`: their counts and warnings would describe
+the source import rather than the rows they hold.
+
+## Load your own file
+
+`loadCSV`, `loadTSV` and `loadJSON` read local files from a `dataset/` folder in the
+project root:
+
+```text
+my-project/
+├── dataset/
+│   └── sales.csv
+├── package.json
+└── src/
+    └── index.ts
+```
+
+```ts
+import { loadCSV } from '@munachi-me/numiq';
+
+const sales = await loadCSV('sales.csv'); // reads ./dataset/sales.csv
+```
+
+Pass only the filename. Absolute paths, `..`, and path separators are rejected, and a
+symlink inside `dataset/` that points outside it is refused.
+
+<Callout type="warn" title="Browser builds cannot read local files">
+  The default entry point contains no Node.js built-ins. In a browser, pass a `Blob`, a `File`, an
+  `ArrayBuffer` or a URL instead. Calling `loadCSV("sales.csv")` there throws an `EnvironmentError`
+  that explains the alternative.
+</Callout>
+
+## Next steps
+
+- [Data loading](/numiq/docs/data-loading) — every source and option.
+- [Dataset fundamentals](/numiq/docs/datasets) — shape, columns, immutability.
+- [Transformation](/numiq/docs/transformation) — cleaning and deriving columns.
